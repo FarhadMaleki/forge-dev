@@ -3,22 +3,55 @@ import random
 import numpy as np 
 import SimpleITK as sitk
 import logging
+from numbers import Number
+from typing import List, Set, Dict, Tuple, Optional, Union
 
-from alan.utils import get_stats
-from alan.utils import check_dimensions
+from utils import get_stats
+from utils import check_dimensions
 
+# Number = Union[int, float, np.int8, np.int16, np.int32,
+#                 np.int64, np.uint8, np.uint16, np.uint32,
+#                 np.uint64]
 
 EPSILON = 1E-8
-
+DIMENSION = 3
 logging.basicConfig(format='%(levelname)s:%(message)s',
                     level=logging.DEBUG)
 
 def apply_transform(trfm, image, mask=None, *args, **kwargs):
-    """Apply a sitk transform on the input image and the input mask if exist."""
+    """Apply a sitk src on the input image and the input mask if exist."""
     image = trfm.Execute(image, *args, **kwargs)
     if mask is not None:
         mask = trfm.Execute(mask, *args, **kwargs)
     return image, mask
+
+
+def expand_parameters(param, dimension, name, convert_fn=None):
+    error_message = (f'{name} must be a numerical scalar, a list of {dimension} numbers,'
+                     f' or list of {dimension} tuples each of  2 numbers.')
+    if isinstance(param, np.complex):
+        raise ValueError(error_message)
+    if isinstance(param, Number):
+        if convert_fn is not None:
+            param = convert_fn(param)
+        lb = -np.abs(param)
+        ub = np.abs(param)
+        param = [(lb, ub), (lb, ub), (lb, ub)]
+    elif isinstance(param, (tuple, list, np.array)):
+        if convert_fn is not None:
+            param = convert_fn(param)
+        param = np.array(param)
+        if len(param) != dimension:
+            raise ValueError(error_message)
+        if len(param.flatten()) == dimension:
+            param = np.dstack([-np.abs(param), np.abs(param)]).squeeze()
+        elif len(param.flatten()) == 2 * dimension:
+            for component in param:
+                if len(component) != 2:
+                    raise ValueError(error_message)
+        else:
+            raise ValueError(error_message)
+    return param
 
 class Pad(object):
     """Pad an image and a mask using three methods include constant padding,
@@ -117,24 +150,59 @@ class Pad(object):
                           self.p)
 
 
+class ForegroundMask(object):
+    """
+    """
+
+    def __init__(self, background: str = '<', bins=128):
+        self.background = background
+        self.filter = sitk.OtsuThresholdImageFilter()
+        self.filter.SetInsideValue(1)
+        self.filter.SetOutsideValue(0)
+        self.filter.SetNumberOfHistogramBins(bins)
+        self.filter.SetMaskOutput(False)
+
+    def __call__(self, image):
+
+        self.filter.Execute(image)
+        threshold = self.filter.GetThreshold()
+        print(threshold, image.GetSize())
+        image_array = sitk.GetArrayFromImage(image)
+        mask_array = np.ones_like(image_array, dtype=np.uint8)
+        if self.background == '<':
+            mask_array[image_array < threshold] = 0
+        elif self.background == '<=':
+            mask_array[image_array <= threshold] = 0
+        elif self.background == '>':
+            mask_array[image_array > threshold] = 0
+        elif self.background == '>=':
+            mask_array[image_array >= threshold] = 0
+        else:
+            msg = 'Valid background calculation values are:  <, <=, >, and >='
+            raise ValueError(msg)
+        mask = sitk.GetImageFromArray(mask_array)
+        mask.CopyInformation(image)
+        return image, mask
+
 class ForegroundCrop(object):
     """
     """
-
-    def __init__(self):
-        pass
+    def __init__(self, background: str = '<', bins=128):
+        self.background = background
+        self.bins = bins
 
     def __call__(self, image, mask=None):
-        inside_value = 0
-        outside_value = 1
+        foreground = ForegroundMask(self.background, self.bins)
+        _, foreground_mask = foreground(image)
         lbl_shape_filter = sitk.LabelShapeStatisticsImageFilter()
-        otsu = sitk.OtsuThreshold(image, inside_value, outside_value)
-        lbl_shape_filter.Execute(otsu)
-        bbox = lbl_shape_filter.GetBoundingBox(outside_value)
-        # The bounding box's first half of entries represent the starting index
-        # and the second half of entries represent the size
-        bbox_size = bbox[int(len(bbox) / 2):]
-        bbox_index = bbox[0:int(len(bbox) / 2)]
+        lbl_shape_filter.Execute(foreground_mask)
+        FORGROUDN_LABEL = 1
+        bbox = lbl_shape_filter.GetBoundingBox(FORGROUDN_LABEL)
+        # The first half of entries represents the starting index
+        # and the second half of entries represents the size
+        mid = len(bbox) // 2
+        bbox_index = bbox[0: mid]
+        bbox_size = bbox[mid:]
         image = sitk.RegionOfInterest(image, bbox_size, bbox_index)
         if mask is not None:
             mask = sitk.RegionOfInterest(mask, bbox_size, bbox_index)
@@ -144,8 +212,60 @@ class ForegroundCrop(object):
         msg = '{} (inside_value={}, outside_value={}'
         return msg.format(self.__class__.__name__)
 
+#
+# class Rotate(object):
+#     """Rotate the given CT image by constant value x, y, z angles.
+#
+#     Args:
+#         angles (sequence): The rotation angles in degrees. default is `(10, 10, 10)`.
+#         interpolator(sitk interpolator): interpolator to apply on
+#             rotated ct images.
+#         p (float): The transformation is applied to the input image with a
+#             probability of p. The default value is `0.5`.
+#     """
+#
+#     def __init__(self, angles=(10, 10, 10), interpolator=sitk.sitkLinear, p=0.5):
+#         self.p = p
+#         if isinstance(angles, int):
+#             angles = [0, 0, angles]
+#         if isinstance(angles, (tuple, list)):
+#             if len(angles) == 2 or len(angles) > 3:
+#                 raise ValueError(f'Expected one integer or a sequence of '
+#                                  f'length 3 as a angle or each dimension. Got {len(angles)}.')
+#         self.x_angle, self.y_angle, self.z_angle = angles
+#         self.tz = sitk.VersorTransform((0, 0, 1), np.deg2rad(self.z_angle))
+#         self.ty = sitk.VersorTransform((0, 1, 0), np.deg2rad(self.y_angle))
+#         self.tx = sitk.VersorTransform((1, 0, 0), np.deg2rad(self.x_angle))
+#
+#         self.interpolator = interpolator
+#
+#     def __call__(self, image, mask=None):
+#         check_dimensions(image, mask)
+#         if random.random() <= self.p:
+#             center = image.TransformContinuousIndexToPhysicalPoint(
+#                                                         np.array(image.GetSize()) / 2.0)
+#
+#             self.tz.SetCenter(center)
+#             self.ty.SetCenter(center)
+#             self.tx.SetCenter(center)
+#
+#             composite = sitk.CompositeTransform(self.tz)
+#             composite.AddTransform(self.ty)
+#             composite.AddTransform(self.tx)
+#
+#             image = sitk.Resample(image, image, composite, self.interpolator)
+#             if mask is not None:
+#                 mask = sitk.Resample(mask, mask, composite, sitk.sitkNearestNeighbor)
+#         return image, mask
+#
+#     def __repr__(self):
+#         msg = '{} (angles={}, interpolator={}, p={})'
+#         return msg.format(self.__class__.__name__,
+#                           (self.x_angle, self.y_angle, self.z_angle),
+#                           self.interpolator,
+#                           self.p)
 
-class Rotate(object):
+class Affine(object):
     """Rotate the given CT image by constant value x, y, z angles.
 
     Args:
@@ -155,47 +275,131 @@ class Rotate(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `0.5`.
     """
+    DIMENSION = 3
 
-    def __init__(self, angles=(10, 10, 10), interpolator=sitk.sitkLinear, p=0.5):
+    def __init__(self, angles=(0, 0, 20), translation=0, scale=1, p=0.5,
+                 interpolator=sitk.sitkLinear, image_background=-1024,
+                 mask_background=0, reference=None):
         self.p = p
-        if angles == (0, 0, 0):
-            raise ValueError('There is no nonzero angle.')
-        if isinstance(angles, int):
-            angles = [0, 0, angles]
-        if isinstance(angles, (tuple, list)):
-            if len(angles) == 2 or len(angles) > 3:
-                raise ValueError(f'Expected one integer or a sequence of '
-                                 f'length 3 as a angle or each dimension. Got {len(angles)}.')
-        self.x_angle, self.y_angle, self.z_angle = angles
-        self.tz = sitk.VersorTransform((0, 0, 1), np.deg2rad(self.z_angle))
-        self.ty = sitk.VersorTransform((0, 1, 0), np.deg2rad(self.y_angle))
-        self.tx = sitk.VersorTransform((1, 0, 0), np.deg2rad(self.x_angle))
-
+        self.reference = reference
+        self.angles = expand_parameters(angles, DIMENSION, 'angles', convert_fn=np.radians)
+        self.translation = expand_parameters(translation, DIMENSION, 'translation', convert_fn=None)
+        self.scale = scale
         self.interpolator = interpolator
+        self.image_background = image_background
+        self.mask_background = mask_background
 
-    def __call__(self, image, mask=None, *args, **kwargs):
-        check_dimensions(image, mask)
+    def __call__(self, image, mask=None):
         if random.random() <= self.p:
-            center = image.TransformContinuousIndexToPhysicalPoint(
-                                                        np.array(image.GetSize()) / 2.0)
+            aug_transform = sitk.Similarity3DTransform()
+            reference = image if self.reference is None else self.reference
+            transform = sitk.AffineTransform(Affine.DIMENSION)
+            transform.SetMatrix(image.GetDirection())
+            transform.SetTranslation(np.array(image.GetOrigin()) - np.array(reference.GetOrigin()))
+            # Modify the transformation to align the centers of the original and
+            # reference image instead of their origins.
+            centering = sitk.TranslationTransform(Affine.DIMENSION)
+            image_center = np.array(image.TransformContinuousIndexToPhysicalPoint(np.array(image.GetSize()) / 2.0))
+            reference_center = reference.TransformContinuousIndexToPhysicalPoint(np.array(reference.GetSize()) / 2.0)
+            reference_center = np.array(reference_center)
+            centering.SetOffset(np.array(transform.GetInverse().TransformPoint(image_center) - reference_center))
+            centered_transform = sitk.CompositeTransform(transform)
+            centered_transform.AddTransform(centering)
 
-            self.tz.SetCenter(center)
-            self.ty.SetCenter(center)
-            self.tx.SetCenter(center)
-
-            composite = sitk.CompositeTransform(self.tz)
-            composite.AddTransform(self.ty)
-            composite.AddTransform(self.tx)
-
-            image = sitk.Resample(image, image, composite, self.interpolator)
+            # Set the augmenting transform's center so that rotation is around the image center.
+            aug_transform.SetCenter(reference_center)
+            angles = [np.random.uniform(lb, ub) for (lb, ub) in self.angles]
+            translation = [np.random.uniform(*pair) for pair in self.translation]
+            parameters = Affine.make_parameters(*angles, *translation, self.scale)
+            aug_transform.SetParameters(parameters)
+            # Augmentation is done in the reference image space,
+            # so we first map the points from the reference image space
+            # back onto itself T_aug (e.g. rotate the reference image)
+            # and then we map to the original image space T0.
+            composite = sitk.CompositeTransform([centered_transform, aug_transform])
+            aug_image = sitk.Resample(image, reference, composite,
+                                      self.interpolator, self.image_background)
+            aug_mask = None
             if mask is not None:
-                mask = sitk.Resample(mask, mask, composite, self.interpolator)
-        return image, mask
+                aug_mask = sitk.Resample(mask, reference, composite,
+                                         sitk.sitkNearestNeighbor, self.mask_background)
+            return aug_image, aug_mask
+
+    @staticmethod
+    def make_parameters(thetaX, thetaY, thetaZ, tx, ty, tz, scale):
+        '''
+        Create a list representing a regular sampling of the 3D similarity transformation parameter space. As the
+        SimpleITK rotation parameterization uses the vector portion of a versor we don't have an
+        intuitive way of specifying rotations. We therefor use the ZYX Euler angle parametrization and convert to
+        versor.
+        Args:
+            thetaX, thetaY, thetaZ: numpy ndarrays with the Euler angle values to use.
+            tx, ty, tz: numpy ndarrays with the translation values to use.
+            scale: numpy array with the scale values to use.
+        Return:
+            List of lists representing the parameter space sampling (vx,vy,vz,tx,ty,tz,s).
+        '''
+        return [list(Affine.eul2quat(parameter_values[0], parameter_values[1], parameter_values[2])) +
+                [np.asscalar(p) for p in parameter_values[3:]] for parameter_values in
+                np.nditer(np.meshgrid(thetaX, thetaY, thetaZ, tx, ty, tz, scale))][0]
+
+    @staticmethod
+    def eul2quat(ax, ay, az, atol=1e-8):
+        '''
+        Translate between Euler angle (ZYX) order and quaternion representation of a rotation.
+        Args:
+            ax: X rotation angle in radians.
+            ay: Y rotation angle in radians.
+            az: Z rotation angle in radians.
+            atol: tolerance used for stable quaternion computation (qs==0 within this tolerance).
+        Return:
+            Numpy array with three entries representing the vectorial component of the quaternion.
+        '''
+        # Create rotation matrix using ZYX Euler angles and then compute quaternion using entries.
+        cx = np.cos(ax)
+        cy = np.cos(ay)
+        cz = np.cos(az)
+        sx = np.sin(ax)
+        sy = np.sin(ay)
+        sz = np.sin(az)
+        r = np.zeros((3, 3))
+        r[0, 0] = cz * cy
+        r[0, 1] = cz * sy * sx - sz * cx
+        r[0, 2] = cz * sy * cx + sz * sx
+
+        r[1, 0] = sz * cy
+        r[1, 1] = sz * sy * sx + cz * cx
+        r[1, 2] = sz * sy * cx - cz * sx
+
+        r[2, 0] = -sy
+        r[2, 1] = cy * sx
+        r[2, 2] = cy * cx
+
+        # Compute quaternion:
+        qs = 0.5 * np.sqrt(r[0, 0] + r[1, 1] + r[2, 2] + 1)
+        qv = np.zeros(3)
+        # If the scalar component of the quaternion is close to zero, we
+        # compute the vector part using a numerically stable approach
+        if np.isclose(qs, 0.0, atol):
+            i = np.argmax([r[0, 0], r[1, 1], r[2, 2]])
+            j = (i + 1) % 3
+            k = (j + 1) % 3
+            w = np.sqrt(r[i, i] - r[j, j] - r[k, k] + 1)
+            qv[i] = 0.5 * w
+            qv[j] = (r[i, j] + r[j, i]) / (2 * w)
+            qv[k] = (r[i, k] + r[k, i]) / (2 * w)
+        else:
+            denom = 4 * qs
+            qv[0] = (r[2, 1] - r[1, 2]) / denom
+            qv[1] = (r[0, 2] - r[2, 0]) / denom
+            qv[2] = (r[1, 0] - r[0, 1]) / denom
+        return qv
+
 
     def __repr__(self):
         msg = '{} (angles={}, interpolator={}, p={})'
         return msg.format(self.__class__.__name__,
-                          (self.x_angle, self.y_angle, self.z_angle),
+                          str(self.angles),
                           self.interpolator,
                           self.p)
 
@@ -300,6 +504,7 @@ class Flip(object):
                           self.axes,
                           self.p)
 
+
 class RandomFlipX(object):
     ''' TODO: 
     '''
@@ -310,18 +515,19 @@ class RandomFlipX(object):
         self.trfm = sitk.FlipImageFilter()
         self.trfm.SetFlipAxes(self.axes)
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+    def __call__(self, image, mask=None):
         if mask is not None:
             check_dimensions(image, mask)
         assert len(self.axes) == image.GetDimension(), 'image axes is ' \
                                                        'different from image dimension'
         if random.random() <= self.p:
-            image, mask = apply_transform(self.trfm, image, mask, *args, **kwargs)
+            image, mask = apply_transform(self.trfm, image, mask)
         return image, mask
 
     def __repr__(self):
         msg = '{} (axes={}, p={})'
         return msg.format(self.__class__.__name__, self.p)
+
 
 class RandomFlipY(object):
     ''' TODO: 
@@ -346,6 +552,7 @@ class RandomFlipY(object):
         msg = '{} (axes={}, p={})'
         return msg.format(self.__class__.__name__, self.p)
 
+
 class RandomFlipZ(object):
     ''' TODO: 
     '''
@@ -369,6 +576,7 @@ class RandomFlipZ(object):
         msg = '{} (axes={}, p={})'
         return msg.format(self.__class__.__name__, self.p)
 
+
 class Crop(object):
     """  Crop image to the selected region bounds.
 
@@ -386,8 +594,6 @@ class Crop(object):
     """
 
     def __init__(self, size: tuple, index: tuple, p=1.0):
-        assert isinstance(size, (tuple, list))
-        assert isinstance(index, (tuple, list))
         self.size = size
         self.index = index
         self.p = p
@@ -397,6 +603,9 @@ class Crop(object):
 
     def __call__(self, image, mask=None, *args, **kwargs):
         check_dimensions(image, mask)
+        end_coordinate = np.array(self.index) + np.array(self.size)
+        if all(end_coordinate > np.array(image.GetSize())):
+            raise ValueError('size + index cannot be greater than image size')
         if random.random() <= self.p:
             image, mask = apply_transform(self.tsfm, image, mask)
         return image, mask
@@ -422,7 +631,6 @@ class RandomCrop(object):
         """
 
     def __init__(self, size: tuple, p=1.0):
-        assert isinstance(size, (tuple, list))
         self.size = size
         self.p = p
 
@@ -430,13 +638,19 @@ class RandomCrop(object):
         check_dimensions(image, mask)
         if random.random() <= self.p:
             diff_width = image.GetWidth() - self.size[0]
-            assert diff_width >= 0, 'Input image width is less than output width.'
-            diff_hight = image.GetHeight() - self.size[1]
-            assert diff_hight >= 0, 'Input image hight is less than output hight.'
+            if diff_width < 0:
+                msg = 'Copped region width cannot be larger than image width.'
+                raise ValueError(msg)
+            diff_height = image.GetHeight() - self.size[1]
+            if diff_height < 0:
+                msg = 'Copped region height cannot be larger than image height.'
+                raise ValueError(msg)
             diff_depth = image.GetDepth() - self.size[2]
-            assert diff_depth >= 0, 'Input image depth is less than output depth.'
-            index = tuple([random.randint(0, s)
-                           for s in [diff_width, diff_hight, diff_depth]])
+            if diff_depth < 0:
+                msg = 'Copped region depth cannot be larger than image depth.'
+                raise ValueError(msg)
+            index = tuple([np.random.randint(0, s + 1)
+                           for s in [diff_width, diff_height, diff_depth]])
             tsfm = Crop(size=self.size, index=index, p=1.0)
             image, mask = tsfm(image, mask)
         return image, mask
@@ -466,17 +680,20 @@ class CenterCrop(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
-    def __init__(self, output_size, p=1.0):
-        self.output_size = np.array(output_size, dtype='uint')
+    def __init__(self, size, p=1.0):
+        self.output_size = np.array(size, dtype='uint')
         self.p = p
         self.tsfm = sitk.RegionOfInterestImageFilter()
 
     def __call__(self, image, mask=None):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            assert len(self.output_size) == image.GetDimension()
+            if len(self.output_size) != image.GetDimension():
+                msg = 'length of size should be the same as image dimension'
+                raise ValueError(msg)
             image_size = np.array(image.GetSize())
-            assert np.all(self.output_size <= image_size)
+            if not np.all(self.output_size <= image_size):
+                raise ValueError('size cannot be larger than image size')
             index = np.array([(s - o)//2
                               for s, o in zip(image_size, self.output_size)],
                              dtype='uint')
@@ -493,13 +710,13 @@ class CenterCrop(object):
                           self.p)
 
 
-class SegmentSafeRandomCrop(object):
+class SegmentSafeCrop(object):
     """ Crop an image and a mask so that keep informative segments safely.
         first, it gets the regions that contain special infromations and then
         crop the image and mask using those informations.
 
     Args:
-        min_size (sequence): Minimum interesting size to crop important parts of
+        crop_size (sequence): Minimum interesting size to crop important parts of
             the image based on. Input values must be in order width, height,
             depth.
         include(sequence): Sequence of unique ids for each
@@ -507,26 +724,31 @@ class SegmentSafeRandomCrop(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
-    def __init__(self, min_size, include=[1], p=1.0):
-        self.min_size = np.array(min_size)
+    def __init__(self, crop_size, include=[1], p=1.0):
+        self.crop_size = np.array(crop_size)
         self.include = include
         self.p = p
         assert isinstance(self.include, (tuple, list))
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+    def __call__(self, image, mask=None):
         if mask is None:
-            raise ValueError("There is no mask.")
+            raise ValueError('SegmentSafeCrop requires a mask.')
         check_dimensions(image, mask)
-        image_size = image.GetSize()
-        msg = 'Min size must be less than or equal to image size.'
-        assert np.all(np.array(self.min_size) <= np.array(image_size)), msg
+        image_size = np.array(image.GetSize())
+        msg = 'crop_size must be less than or equal to image size.'
+        if not np.all(self.crop_size <= image_size):
+            raise ValueError(msg)
         if random.random() <= self.p:
             # Create a binary mask
             mask_arr = sitk.GetArrayFromImage(mask)
-            mask_arr[np.isin(mask_arr, self.include)] = 1
-            binary_mask = sitk.GetImageFromArray(mask_arr)
+            mask_array = np.zeros_like(mask_arr)
+            mask_array[np.isin(mask_arr, self.include)] = 1
+            binary_mask = sitk.GetImageFromArray(mask_array)
             binary_mask.CopyInformation(mask)
             #
+            if mask_array.sum() == 0:
+                tsfm = RandomCrop(self.crop_size.tolist(), p=1.0)
+                return tsfm(image, mask=mask)
             lsif = sitk.LabelShapeStatisticsImageFilter()
             lsif.Execute(binary_mask)
             bbox = np.array(lsif.GetBoundingBox(1))
@@ -534,35 +756,40 @@ class SegmentSafeRandomCrop(object):
             seg_index = np.array(bbox[:mid])
             seg_size = np.array(bbox[mid:])
             #
-            min_size = self.min_size
-            image_size = np.array(image.GetSize())
-            min_size = np.maximum(min_size, seg_size)
-            bbox_index = np.minimum(seg_index, image_size - min_size)
-            end_point = np.random.randint(low=bbox_index + min_size,
-                                          high=image_size + 1)
-            bbox_size = end_point - bbox_index
-
+            crop_size = self.crop_size
+            rand = np.random.default_rng()
+            crop_index = []
+            for i, (seg_length, crop_length) in enumerate(zip(seg_size, crop_size)):
+                if seg_length < crop_length:
+                    low = max(0, seg_index[i] + seg_length - crop_length)
+                    high = min(seg_index[i], image_size[i] - crop_length)
+                    crop_index.append(rand.integers(low, high, endpoint=True))
+                else:
+                    flexibility = seg_length - crop_length
+                    crop_index.append(rand.integers(seg_index[i],
+                                                    seg_index[i] + flexibility,
+                                                    endpoint=True))
             tsfm = sitk.RegionOfInterestImageFilter()
-            tsfm.SetSize(bbox_size.astype(int).tolist())
-            tsfm.SetIndex(bbox_index.astype(int).tolist())
+            tsfm.SetSize(crop_size.astype(int).tolist())
+            tsfm.SetIndex(np.array(crop_index).astype(int).tolist())
             image, mask = apply_transform(tsfm, image, mask)
         return image, mask
 
     def __repr__(self):
         msg = '{} (min size={}, interesting segments={}, p={})'
         return msg.format(self.__class__.__name__,
-                          self.min_size,
+                          self.crop_size,
                           self.include,
                           self.p)
 
 
 class Resize(object):
-    """Resize an image via a coordinate transform.
+    """Resize an image via a coordinate src.
 
     Args:
-        size(sequence): Sequence of int values interpreted the size for each dimension.
-            Dimentions order in size is [width, height, depth]. If the length of
-            size parameter is less than 3 it will be used just for width and height.
+        size(sequence): Sequence of int values representing image size. The order
+            of dimensions is x, y, and z (i.e., width, height, and depth). The length
+            of size should match the dimensions of the image.
         interpolator(itk::simple::InterpolatorEnum Interpolator): The interpolator
             function. The default is `LinearInterpolateImageFunction <InputImageType,
             TInterpolatorPrecisionType>`. Some other options are
@@ -575,25 +802,33 @@ class Resize(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
-    def __init__(self, size: tuple, interpolator=sitk.sitkLinear,
-                 default_pixel_value: int=0, p: float=1.0):
+    def __init__(self, size: Tuple[int, int, int], interpolator=sitk.sitkLinear,
+                 default_image_pixel_value: int=-1024, default_mask_pixel_value: int=0, p: float=1.0):
         self.size = size
         self.interpolator = interpolator
-        self.default_pixel_value = default_pixel_value
+        self.default_image_pixel_value = default_image_pixel_value
+        self.default_mask_pixel_value = default_mask_pixel_value
         self.p = p
         self.tsfm = sitk.ResampleImageFilter()
         self.tsfm.SetTransform(sitk.Transform())
-        self.tsfm.SetDefaultPixelValue(self.default_pixel_value)
+
+
 
     def __call__(self, image: sitk.Image, mask: sitk.Image=None):
         check_dimensions(image, mask)
-        assert image.GetDimension() == len(self.size)
+        if image.GetDimension() != len(self.size):
+            msg = f'Image dimension should be equal to {DIMENSION}.'
+            raise ValueError(msg)
+        if np.any(np.array(self.size) <= 0):
+            msg = 'Image size cannot be zero or negative in any dimension'
+            raise ValueError(msg)
         if random.random() <= self.p:
             spacing = [img_size * img_spacing / out_size
                        for img_size, img_spacing, out_size in zip(image.GetSize(),
                                                                   image.GetSpacing(),
                                                                   self.size)]
             # Resize image.
+            self.tsfm.SetDefaultPixelValue(self.default_image_pixel_value)
             self.tsfm.SetSize(self.size)
             self.tsfm.SetOutputSpacing(spacing)
             self.tsfm.SetOutputOrigin(image.GetOrigin())
@@ -602,11 +837,12 @@ class Resize(object):
             self.tsfm.SetInterpolator(self.interpolator)
             image = self.tsfm.Execute(image)
             # Resize mask
-            if mask:
+            if mask is not None:
                 spacing = [img_size * img_spacing / out_size
                            for img_size, img_spacing, out_size in zip(mask.GetSize(),
                                                                       mask.GetSpacing(),
                                                                       self.size)]
+                self.tsfm.SetDefaultPixelValue(self.default_mask_pixel_value)
                 self.tsfm.SetOutputSpacing(spacing)
                 self.tsfm.SetOutputOrigin(mask.GetOrigin())
                 self.tsfm.SetOutputDirection(mask.GetDirection())
@@ -625,9 +861,10 @@ class Resize(object):
 
 
 class Expand(object): 
-    """Expand the size of an image by an integer factor in each dimension by 
-        an interpolation method.
-    
+    """Expand the size of an image by an integer factor in each dimension.
+    This filter will produce an output with different pixel spacing that its input image such that:
+
+
     Args: 
         expand_factors (int, sequence): Sequence of int values interpreted the 
             increasing factor for each dimension. Values are clamped to a 
@@ -642,18 +879,21 @@ class Expand(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
-    def __init__(self, expand_factors: tuple, interpolator=sitk.sitkLinear,
+    def __init__(self, expansion: tuple, interpolator=sitk.sitkLinear,
                  p: float=1.0):
-        self.expand_factors = expand_factors
+        self.expansion = expansion
         self.interpolator = interpolator
         self.p = p
         self.tsfm = sitk.ExpandImageFilter()
-        self.tsfm.SetExpandFactors(self.expand_factors)
+        self.tsfm.SetExpandFactors(self.expansion)
         self.tsfm.SetInterpolator(self.interpolator)
 
     def __call__(self, image, mask=None):
         check_dimensions(image, mask)
         if random.random() <= self.p:
+            if len(self.expansion) != image.GetDimension():
+                msg = 'Image dimension must equal the length of expansion.'
+                raise ValueError(msg)
             image, mask = apply_transform(self.tsfm, image, mask)
         return image, mask
 
@@ -671,20 +911,22 @@ class Shrink(object):
             outputSize[j] = max(floor(inputSize[j]/shrinkFactor[j]), 1)
     Args:
         shrink_factors (int, sequence): Rescale parameter to reduce the size of
-            image. If the input value is int it will be use for all dimension
-            equally. Default value is `(2, 2, 1)`.
+            image. Default value is `(2, 2, 1)`.
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     '''
-    def __init__(self, shrink_factors: tuple, p: float=1.0):
-        self.shrink_factors = shrink_factors
+    def __init__(self, shrinkage: tuple, p: float=1.0):
+        self.shrinkage = shrinkage
         self.p = p
 
         self.tsfm = sitk.BinShrinkImageFilter()
-        self.tsfm.SetShrinkFactors(self.shrink_factors)
+        self.tsfm.SetShrinkFactors(self.shrinkage)
 
     def __call__(self, image, mask=None):
         check_dimensions(image, mask)
+        if len(self.shrinkage) != image.GetDimension():
+            msg = 'Image dimension must equal the length of shrinkage.'
+            raise ValueError(msg)
         if random.random() <= self.p:
             image, mask = apply_transform(self.tsfm, image, mask)
         return image, mask
@@ -698,7 +940,7 @@ class Shrink(object):
 
 class Invert(object):
     """Invert the intensity of an image with a constant value.
-        This transform does not affect mask.
+        This src does not affect mask.
    
     Args:
         p (float): The transformation is applied to the input image with a
@@ -763,7 +1005,7 @@ class BionomialBlur(object):
 
 class SaltPepperNoise(object):
     """Alter an image with fixed value impulse noise, often called salt and
-        pepper noise. This transform doesn't have any effect on mask.
+        pepper noise. This src doesn't have any effect on mask.
 
     Args:
         noise_prob (float): Noise probablity to be applied on each image. 
@@ -800,7 +1042,7 @@ class SaltPepperNoise(object):
 
 class GaussianWhiteNoise(object):
     """Alter an image with additive Gaussian white noise.
-        This transform doesn't have any effect on masks.
+        This src doesn't have any effect on masks.
    
     Args:
         mean (float): Mean value for using in gaussian distribution. 
@@ -845,7 +1087,7 @@ class LocalNoiseCalculator(object):
             neighborhood and calculating the standard deviation of the residuals
             to this (hyper) plane.
 
-    -- note: This transform applies only to image.
+    -- note: This src applies only to image.
     Args:
         radius (int): Set the values of the Radius vector all to value.
         p (float): The transformation is applied to the input image with a
@@ -875,7 +1117,7 @@ class MinMaxScaler(object):
     """ Transform an image by scaling each pixel/voxel value to a given range.
 
          Pixel/Voxel values will be transformed to a given range
-            (min_value, max_value) in a linear manner. This transform does not
+            (min_value, max_value) in a linear manner. This src does not
             affect the mask, if applicable. A constant image will be converted
             to an image where all pixels/voxels are equal to the provided
             max_value.
@@ -918,7 +1160,7 @@ class MinMaxScaler(object):
 class UnitNormalize(object):
     """ Normalize an image by setting its mean to zero and variance to one.
 
-        This transform take no action on masks.
+        This src take no action on masks.
 
     Args: 
         p (float): The transformation is applied to the input image with a
@@ -944,8 +1186,8 @@ class ConstantNormalizer(object):
     """ Scales image pixel intensities to make the sum of all pixels equal a
         user-defined constant.
 
-        This transform is especially useful for normalizing a convolution kernel.
-        This transform hase no effect on masks.
+        This src is especially useful for normalizing a convolution kernel.
+        This src hase no effect on masks.
 
     Args:
         sum_constant (float): Constant float value. Normalizer make the sum of
@@ -1196,7 +1438,7 @@ class LabelToRGB(object):
             a gray pixel with the same intensity than the background label
             is produced.
     -- Note that this transformation takes no action on the input mask.
-            But to be usable as a part of a pipeline, the transform takes mask
+            But to be usable as a part of a pipeline, the src takes mask
             as its second input.
     Args: 
         colormap (int, sequence): The colormap with an integer value 
@@ -1442,7 +1684,7 @@ class RandomChoices(object):
 class OneOf(object):
     """ Apply one of the provided transformations.
     Args:
-        transforms(list): List of transforms. One transform will be selected
+        transforms(list): List of transforms. One src will be selected
         by random and will be applied.
     """
     def __init__(self, transforms):
@@ -1484,7 +1726,7 @@ class Lambda(object):
     """ Apply a cutomized transformation.
 
     Args:
-        lambd (function): Lambda/function to be used for transform.
+        lambd (function): Lambda/function to be used for src.
         sitk_lambda(bool): If true lambda function is aSimpleITK function,
             otherwise the lambda function must be numpy function.
         --note: Input images and mask are compatible with lambda function.
