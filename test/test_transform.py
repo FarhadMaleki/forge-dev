@@ -41,11 +41,11 @@ class TestTransform(unittest.TestCase):
         mask = sitk.ReadImage(mask_path)
         return image, mask
 
-    def setUp(self):
-        image_path = 'test/data/image2.nrrd'
-        mask_path = 'test/data/mask2.nrrd'
-        self.image = sitk.ReadImage(image_path)
-        self.mask = sitk.ReadImage(mask_path)
+    # def setUp(self):
+    #     image_path = 'test/data/image2.nrrd'
+    #     mask_path = 'test/data/mask2.nrrd'
+    #     image = sitk.ReadImage(image_path)
+    #     mask = sitk.ReadImage(mask_path)
 
     def test_ForegroundMask(self):
         image, mask = TestTransform.load_cube('small')
@@ -78,180 +78,199 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(np.all(sitk.GetArrayFromImage(img) == 1))
 
     def test_only_rotation_Affine(self):
-
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Affine(angles=180, translation=0, scale=1,
                          interpolator=sitk.sitkLinear, image_background=-1024,
                          mask_background=0, reference=None, p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(img.GetSize() == self.image.GetSize())
-        self.assertTrue(msk.GetSize() == self.mask.GetSize())
-        self.assertEqual(self.image.GetOrigin(), img.GetOrigin())
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(img.GetSize() == image.GetSize())
+        self.assertTrue(msk.GetSize() == mask.GetSize())
+        self.assertEqual(image.GetOrigin(), img.GetOrigin())
 
         tsfm = tr.Affine(angles=(10, 10, 20), translation=0, scale=1,
                          interpolator=sitk.sitkLinear, image_background=-1024,
                          mask_background=0, reference=None, p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(img.GetSize() == self.image.GetSize())
-        self.assertTrue(msk.GetSize() == self.mask.GetSize())
-        self.assertEqual(self.image.GetOrigin(), img.GetOrigin())
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(img.GetSize() == image.GetSize())
+        self.assertTrue(msk.GetSize() == mask.GetSize())
+        self.assertEqual(image.GetOrigin(), img.GetOrigin())
 
         tsfm = tr.Affine(angles=((-10, 10), (0, 10), (-50, 20)),
                          translation=0, scale=1, interpolator=sitk.sitkLinear,
                          image_background=-1024, mask_background=0,
                          reference=None, p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(img.GetSize() == self.image.GetSize())
-        self.assertTrue(msk.GetSize() == self.mask.GetSize())
-        self.assertEqual(self.image.GetOrigin(), img.GetOrigin())
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(img.GetSize() == image.GetSize())
+        self.assertTrue(msk.GetSize() == mask.GetSize())
+        self.assertEqual(image.GetOrigin(), img.GetOrigin())
 
     def test_only_rotation_and_Scaling_Affine(self):
+        image, mask = TestTransform.load_cube('small')
         SCALE = 2
         tsfm = tr.Affine(angles=1, translation=0, scale=SCALE,
                          interpolator=sitk.sitkLinear, image_background=-1024,
                          mask_background=0, reference=None, p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        expected_ime_size = SCALE * np.array(self.image.GetSize())
+        img, msk = tsfm(image=image, mask=mask)
+        expected_ime_size = SCALE * np.array(image.GetSize())
         "TODO: Solve the issue with scale"
         # self.assertTrue(np.array_equal(img.GetSize(), expected_ime_size))
         # # self.assertItemsEqual(expected_ime_size)
         # self.assertTrue(img.GetSize() == tuple(expected_ime_size))
-        # self.assertTrue(msk.GetSize() == self.mask.GetSize())
-        # self.assertEqual(self.image.GetOrigin(), img.GetOrigin())
+        # self.assertTrue(msk.GetSize() == mask.GetSize())
+        # self.assertEqual(image.GetOrigin(), img.GetOrigin())
         #
         # tsfm = tr.Affine(angles=(10, 10, 20), translation=0, scale=1,
         #                  interpolator=sitk.sitkLinear, image_background=-1024,
         #                  mask_background=0, reference=None, p=1)
-        # img, msk = tsfm(image=self.image, mask=self.mask)
-        # self.assertTrue(img.GetSize() == self.image.GetSize())
-        # self.assertTrue(msk.GetSize() == self.mask.GetSize())
-        # self.assertEqual(self.image.GetOrigin(), img.GetOrigin())
+        # img, msk = tsfm(image=image, mask=mask)
+        # self.assertTrue(img.GetSize() == image.GetSize())
+        # self.assertTrue(msk.GetSize() == mask.GetSize())
+        # self.assertEqual(image.GetOrigin(), img.GetOrigin())
         #
         # tsfm = tr.Affine(angles=((-10, 10), (0, 10), (-50, 20)),
         #                  translation=0, scale=1, interpolator=sitk.sitkLinear,
         #                  image_background=-1024, mask_background=0,
         #                  reference=None, p=1)
-        # img, msk = tsfm(image=self.image, mask=self.mask)
-        # self.assertTrue(img.GetSize() == self.image.GetSize())
-        # self.assertTrue(msk.GetSize() == self.mask.GetSize())
-        # self.assertEqual(self.image.GetOrigin(), img.GetOrigin())
+        # img, msk = tsfm(image=image, mask=mask)
+        # self.assertTrue(img.GetSize() == image.GetSize())
+        # self.assertTrue(msk.GetSize() == mask.GetSize())
+        # self.assertEqual(image.GetOrigin(), img.GetOrigin())
 
     def test_Flip_X_image_and_mask(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[True, False, False], p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  image_only=False))
 
     def test_Flip_X_image_only(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[True, False, False], p=1)
-        img, msk = tsfm(image=self.image)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  image_only=True))
 
     def test_Flip_Y_image_and_mask(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[False, True, False], p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, yflip=True,
                                                  image_only=False))
 
     def test_Flip_Y_image_only(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[False, True, False], p=1)
-        img, msk = tsfm(image=self.image)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, yflip=True,
                                                  image_only=True))
 
     def test_Flip_Z_image_and_mask(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[False, False, True], p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, zflip=True,
                                                  image_only=False))
 
     def test_Flip_Z_image_only(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[False, False, True], p=1)
-        img, msk = tsfm(image=self.image)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, zflip=True,
                                                  image_only=True))
 
     def test_Flip_XY_image_and_mask(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[True, True, False], p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  yflip=True, image_only=False))
 
     def test_Flip_XY_image_only(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[True, True, False], p=1)
-        img, msk = tsfm(image=self.image)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  yflip=True, image_only=True))
 
     def test_Flip_XYZ_image_and_mask(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[True, True, True], p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  yflip=True, zflip=True, image_only=False))
 
     def test_Flip_XYZ_image_only(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[True, True, True], p=1)
-        img, msk = tsfm(image=self.image)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  yflip=True, zflip=True, image_only=True))
 
     def test_Flip_nothing_image_and_mask(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[False, False, False], p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, image_only=False))
 
     def test_Flip_nothing_image_only(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.Flip(axes=[False, False, False], p=1)
-        img, msk = tsfm(image=self.image)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, image_only=True))
 
     def test_RandomFlipX_image_and_mask(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.RandomFlipX(p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask, img, msk,
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  xflip=True, image_only=False))
 
     def test_RandomFlipX_image_only(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.RandomFlipX(p=1)
-        img, msk = tsfm(image=self.image)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask,
+        img, msk = tsfm(image=image)
+        self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  image_only=True))
 
     def test_RandomFlipY_image_and_mask(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.RandomFlipY(p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask, img, msk,
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  yflip=True, image_only=False))
 
     def test_RandomFlipY_image_only(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.RandomFlipY(p=1)
-        img, msk = tsfm(image=self.image)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask, img, msk,
+        img, msk = tsfm(image=image)
+        self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  yflip=True, image_only=True))
 
     def test_RandomFlipZ_image_and_mask(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.RandomFlipZ(p=1)
-        img, msk = tsfm(image=self.image, mask=self.mask)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask, img, msk,
+        img, msk = tsfm(image=image, mask=mask)
+        self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  zflip=True, image_only=False))
 
     def test_RandomFlipZ_image_only(self):
+        image, mask = TestTransform.load_cube('small')
         tsfm = tr.RandomFlipZ(p=1)
-        img, msk = tsfm(image=self.image)
-        self.assertTrue(TestTransform.checkFilip(self.image, self.mask, img, msk,
+        img, msk = tsfm(image=image)
+        self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  zflip=True, image_only=True))
 
     @staticmethod
@@ -285,99 +304,104 @@ class TestTransform(unittest.TestCase):
         return True
 
     def test_Crop(self):
+        image, mask = TestTransform.load_cube('small')
         size = (2, 2, 2)
         index = (1, 1, 1)
         tsfm = tr.Crop(size, index)
-        img, msk = tsfm(self.image, self.mask)
+        img, msk = tsfm(image, mask)
         self.assertEqual(img.GetSize(), size)
         self.assertEqual(msk.GetSize(), size)
         # Crop only an image
-        img, msk = tsfm(self.image)
+        img, msk = tsfm(image)
         self.assertEqual(img.GetSize(), size)
         self.assertIsNone(msk)
         # Crop the whole image
-        size = self.image.GetSize()
+        size = image.GetSize()
         index = (0, 0, 0)
         tsfm = tr.Crop(size, index)
-        img, msk = tsfm(self.image, self.mask)
+        img, msk = tsfm(image, mask)
         self.assertEqual(img.GetSize(), size)
         self.assertEqual(msk.GetSize(), size)
-        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(self.image),
+        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(image),
                                        sitk.GetArrayFromImage(img)))
-        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(self.mask),
+        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(mask),
                                        sitk.GetArrayFromImage(msk)))
         # Crop only an image
-        img, msk = tsfm(self.image)
+        img, msk = tsfm(image)
         self.assertEqual(img.GetSize(), size)
         self.assertIsNone(msk)
-        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(self.image),
+        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(image),
                                        sitk.GetArrayFromImage(img)))
 
     def test_Crop_not_possible(self):
-        size = self.image.GetSize()
+        image, mask = TestTransform.load_cube('small')
+        size = image.GetSize()
         index = (1, 1, 1)
         tsfm = tr.Crop(size, index)
         try:
-            img, msk = tsfm(self.image, self.mask)
+            img, msk = tsfm(image, mask)
         except ValueError as e:
             msg = 'size + index cannot be greater than image size'
             self.assertEqual(str(e), msg)
 
     def test_RandomCrop(self):
+        image, mask = TestTransform.load_cube('small')
         size = (2, 2, 2)
         tsfm = tr.RandomCrop(size, p=1)
-        img, msk = tsfm(self.image, self.mask)
+        img, msk = tsfm(image, mask)
         self.assertEqual(img.GetSize(), size)
         self.assertEqual(msk.GetSize(), size)
         # Crop only an image
-        img, msk = tsfm(self.image)
+        img, msk = tsfm(image)
         self.assertEqual(img.GetSize(), size)
         self.assertIsNone(msk)
         # Crop the whole image
-        size = self.image.GetSize()
+        size = image.GetSize()
         tsfm = tr.RandomCrop(size, p=1)
-        img, msk = tsfm(self.image, self.mask)
+        img, msk = tsfm(image, mask)
         self.assertEqual(img.GetSize(), size)
         self.assertEqual(msk.GetSize(), size)
-        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(self.image),
+        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(image),
                                        sitk.GetArrayFromImage(img)))
-        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(self.mask),
+        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(mask),
                                        sitk.GetArrayFromImage(msk)))
         # Crop only an image
-        img, msk = tsfm(self.image)
+        img, msk = tsfm(image)
         self.assertEqual(img.GetSize(), size)
         self.assertIsNone(msk)
-        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(self.image),
+        self.assertTrue(np.array_equal(sitk.GetArrayFromImage(image),
                                        sitk.GetArrayFromImage(img)))
 
     def test_RandomCrop_not_possible(self):
+        image, mask = TestTransform.load_cube('small')
         msg = 'Copped region {name} cannot be larger than image {name}.'
         # ValueError for a crop width larger than image width
-        size = list(self.image.GetSize())
+        size = list(image.GetSize())
         size[0] += 1
         tsfm = tr.RandomCrop(size, p=1)
         try:
-            img, msk = tsfm(self.image, mask=self.mask)
+            img, msk = tsfm(image, mask=mask)
         except ValueError as e:
             self.assertTrue(str(e), msg.format(name='width'))
         # ValueError for a crop height larger than image height
-        size = list(self.image.GetSize())
+        size = list(image.GetSize())
         size[1] += 1
         tsfm = tr.RandomCrop(size, p=1)
         try:
-            img, msk = tsfm(self.image, mask=self.mask)
+            img, msk = tsfm(image, mask=mask)
         except ValueError as e:
             self.assertTrue(str(e), msg.format(name='heigh'))
         # ValueError for a crop depth larger than image depth
-        size = list(self.image.GetSize())
+        size = list(image.GetSize())
         size[2] += 1
         tsfm = tr.RandomCrop(size, p=1)
         try:
-            img, msk = tsfm(self.image, mask=self.mask)
+            img, msk = tsfm(image, mask=mask)
         except ValueError as e:
             self.assertTrue(str(e), msg.format(name='depth'))
 
     def test_CenterCrop(self):
+        image, mask = TestTransform.load_cube('small')
         image, mask = TestTransform.load_cube()
         size = (7, 7, 7)
         tsfm = tr.CenterCrop(size, p=1)
@@ -442,31 +466,34 @@ class TestTransform(unittest.TestCase):
         # When mask is empty
         crop_size = (7, 7, 7)
         tsfm = tr.SegmentSafeCrop(crop_size=crop_size, include=[2], p=1.0)
-        img, msk = tsfm(self.image, mask=self.mask)
+        img, msk = tsfm(image, mask=mask)
         self.assertTupleEqual(img.GetSize(), crop_size)
 
     def test_Resize(self):
-        output_size = [2 * x for x in self.image.GetSize()]
+        image, mask = TestTransform.load_cube('small')
+        output_size = [2 * x for x in image.GetSize()]
         tsfm = tr.Resize(size=output_size,
                          interpolator=sitk.sitkLinear,
                          default_image_pixel_value=0,
                          default_mask_pixel_value=0,
                          p=1.0)
-        img, msk = tsfm(self.image, mask=self.mask)
+        img, msk = tsfm(image, mask=mask)
         self.assertTrue(np.array_equal(output_size, img.GetSize()))
         self.assertTrue(np.array_equal(output_size, msk.GetSize()))
 
     def test_Resize_image_only(self):
-        output_size = [2 * x for x in self.image.GetSize()]
+        image, mask = TestTransform.load_cube('small')
+        output_size = [2 * x for x in image.GetSize()]
         tsfm = tr.Resize(size=output_size,
                          interpolator=sitk.sitkLinear,
                          default_image_pixel_value=0,
                          default_mask_pixel_value=0,
                          p=1.0)
-        img, msk = tsfm(self.image)
+        img, msk = tsfm(image)
         self.assertTrue(np.array_equal(output_size, img.GetSize()))
 
     def test_Resize_invalid_size_parameters_raise_error(self):
+        image, mask = TestTransform.load_cube('small')
         try:
             output_size = (2, 2)
             tsfm = tr.Resize(size=output_size,
@@ -474,7 +501,7 @@ class TestTransform(unittest.TestCase):
                              default_image_pixel_value=0,
                              default_mask_pixel_value=0,
                              p=1.0)
-            img, msk = tsfm(self.image, mask=self.mask)
+            img, msk = tsfm(image, mask=mask)
         except ValueError as e:
             msg = 'Image dimension should be equal to 3.'
             self.assertEqual(str(e), msg)
@@ -486,7 +513,7 @@ class TestTransform(unittest.TestCase):
                              default_image_pixel_value=0,
                              default_mask_pixel_value=0,
                              p=1.0)
-            img, msk = tsfm(self.image, mask=self.mask)
+            img, msk = tsfm(image, mask=mask)
         except ValueError as e:
             msg = 'Image size cannot be zero or negative in any dimension'
             self.assertEqual(str(e), msg)
@@ -858,7 +885,6 @@ class TestTransform(unittest.TestCase):
         image, mask = TestTransform.load_cube('medium')
         tsfm = tr.AdaptiveHistogramEqualization(alpha=1.0, beta=0.5, radius=2, p=1.0)
         img, msk = tsfm(image, mask=mask)
-        sitk.WriteImage(img, 'test/data/out.nrrd')
         self.assertEqual(img.GetSize(), image.GetSize())
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(mask),
                                        sitk.GetArrayFromImage(msk)))
@@ -967,10 +993,6 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(len(img), 1)
         self.assertTrue(set(img).issubset(set(ids)))
 
-        # sitk.WriteImage(img, 'test/data/out.nrrd')
-        # sitk.WriteImage(msk, 'test/data/out_msk.nrrd')
-        # image = sitk.ReadImage('/home/fam918/Downloads/TCs/Batch2NRRD/199/anon_DICOM_anon/PA000001/ST000001/SE000004/Image.nrrd')
-
     def test_RandomOrder(self):
         ids = [i for i in range(5)]
         tsfms = [MockTransform(i) for i in ids]
@@ -990,6 +1012,7 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image, mask=mask)
         self.assertEqual(img, [0])
         self.assertEqual(msk, [0])
+
 
 class MockTransform(object):
     def __init__(self, identifier):
