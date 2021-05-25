@@ -4,6 +4,26 @@ import numpy as np
 import SimpleITK as sitk
 import torch
 
+def read_image(path):
+    # Reading DICOM from a directory
+    if os.path.isdir(path):
+        reader = sitk.ImageSeriesReader()
+        series_IDs = reader.GetGDCMSeriesIDs(path)
+        if len(series_IDs) > 1:
+            msg = ('Only One image is allowed in a directory. There are '
+                   f'{len(series_IDs)} Series IDs (images) in {path}.')
+            raise ValueError(msg)
+        if len(series_IDs) == 0:
+            msg = f'There are not dicom files in {path}.'
+            raise ValueError(msg)
+        series_id = series_IDs[0]
+        dicom_names = reader.GetGDCMSeriesFileNames(path, series_id)
+        reader.SetFileNames(dicom_names)
+        image = reader.Execute()
+    elif os.path.isfile(path):
+        image = sitk.ReadImage(path)
+    return image
+
 
 def visualizer(image, mask=None, out_dir = 'out', name='temp.nrrd'):
     os.makedirs(out_dir, exist_ok=True)

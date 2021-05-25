@@ -4,9 +4,10 @@ import numpy as np
 import SimpleITK as sitk
 import logging
 from numbers import Number
-from typing import List, Set, Dict, Tuple, Optional, Union
+from typing import List, Set, Dict, Tuple, Optional, Union, Iterable, Callable
 
 from utils import get_stats
+from utils import read_image
 from utils import check_dimensions
 
 # Number = Union[int, float, np.int8, np.int16, np.int32,
@@ -166,7 +167,6 @@ class ForegroundMask(object):
 
         self.filter.Execute(image)
         threshold = self.filter.GetThreshold()
-        print(threshold, image.GetSize())
         image_array = sitk.GetArrayFromImage(image)
         mask_array = np.ones_like(image_array, dtype=np.uint8)
         if self.background == '<':
@@ -486,8 +486,8 @@ class Flip(object):
     def __init__(self, axes=[True, False, False], p=0.5):
         self.p = p
         self.axes = axes
-        self.trfm = sitk.FlipImageFilter()
-        self.trfm.SetFlipAxes(axes)
+        self.filter = sitk.FlipImageFilter()
+        self.filter.SetFlipAxes(axes)
 
     def __call__(self, image, mask=None, *args, **kwargs):
         if mask is not None:
@@ -495,7 +495,7 @@ class Flip(object):
         assert len(self.axes) == image.GetDimension(), 'image axes is ' \
                                                        'different from image dimension'
         if random.random() <= self.p:
-            image, mask = apply_transform(self.trfm, image, mask, *args, **kwargs)
+            image, mask = apply_transform(self.filter, image, mask, *args, **kwargs)
         return image, mask
 
     def __repr__(self):
@@ -512,8 +512,8 @@ class RandomFlipX(object):
     def __init__(self, p=0.5):
         self.p = p
         self.axes = [True, False, False]
-        self.trfm = sitk.FlipImageFilter()
-        self.trfm.SetFlipAxes(self.axes)
+        self.filter = sitk.FlipImageFilter()
+        self.filter.SetFlipAxes(self.axes)
 
     def __call__(self, image, mask=None):
         if mask is not None:
@@ -521,7 +521,7 @@ class RandomFlipX(object):
         assert len(self.axes) == image.GetDimension(), 'image axes is ' \
                                                        'different from image dimension'
         if random.random() <= self.p:
-            image, mask = apply_transform(self.trfm, image, mask)
+            image, mask = apply_transform(self.filter, image, mask)
         return image, mask
 
     def __repr__(self):
@@ -536,8 +536,8 @@ class RandomFlipY(object):
     def __init__(self, p=0.5):
         self.p = p
         self.axes = [False, True, False]
-        self.trfm = sitk.FlipImageFilter()
-        self.trfm.SetFlipAxes(self.axes)
+        self.filter = sitk.FlipImageFilter()
+        self.filter.SetFlipAxes(self.axes)
 
     def __call__(self, image, mask=None, *args, **kwargs):
         if mask is not None:
@@ -545,7 +545,7 @@ class RandomFlipY(object):
         assert len(self.axes) == image.GetDimension(), 'image axes is ' \
                                                        'different from image dimension'
         if random.random() <= self.p:
-            image, mask = apply_transform(self.trfm, image, mask, *args, **kwargs)
+            image, mask = apply_transform(self.filter, image, mask, *args, **kwargs)
         return image, mask
 
     def __repr__(self):
@@ -560,8 +560,8 @@ class RandomFlipZ(object):
     def __init__(self, p=0.5):
         self.p = p
         self.axes = [False, False, True]
-        self.trfm = sitk.FlipImageFilter()
-        self.trfm.SetFlipAxes(self.axes)
+        self.filter = sitk.FlipImageFilter()
+        self.filter.SetFlipAxes(self.axes)
 
     def __call__(self, image, mask=None, *args, **kwargs):
         if mask is not None:
@@ -569,7 +569,7 @@ class RandomFlipZ(object):
         assert len(self.axes) == image.GetDimension(), 'image axes is ' \
                                                        'different from image dimension'
         if random.random() <= self.p:
-            image, mask = apply_transform(self.trfm, image, mask, *args, **kwargs)
+            image, mask = apply_transform(self.filter, image, mask, *args, **kwargs)
         return image, mask
 
     def __repr__(self):
@@ -984,16 +984,16 @@ class BionomialBlur(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `0.5`.
     """
-    def __init__(self, repetition=1, p=0.5):
+    def __init__(self, repetition=1, p=1.0):
         self.repetition = repetition
         self.p = p
-        self.trfm = sitk.BinomialBlurImageFilter()
-        self.trfm.SetRepetitions(self.repetition)
+        self.filter = sitk.BinomialBlurImageFilter()
+        self.filter.SetRepetitions(self.repetition)
 
     def __call__(self, image, mask=None):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            image, _ = apply_transform(self.trfm, image, None)
+            image, _ = apply_transform(self.filter, image, None)
         return image, mask
 
     def __repr__(self):
@@ -1016,20 +1016,35 @@ class SaltPepperNoise(object):
             probability of p. The default value is `0.5`.
     """
 
-    def __init__(self, noise_prob=0.01, random_seed=None, p=0.5):
+    def __init__(self, noise_prob=0.01, noise_range=None,
+                 random_seed=None, p=0.5):
         self.noise_prob = noise_prob
         self.random_seed = random_seed
         self.p = p
+        self.min, self.max = None, None
+        if noise_range is not None:
+            if noise_range[0] >= noise_range[1] or len(noise_range) != 2:
+                msg = ('noise_range must be a tuple of size 2 representing'
+                       'the lower and upper bounds of noise values')
+                raise ValueError(msg)
+            self.min, self.max = noise_range
 
-        self.trfm = sitk.SaltAndPepperNoiseImageFilter()
-        self.trfm.SetProbability(self.noise_prob)
+        self.filter = sitk.SaltAndPepperNoiseImageFilter()
+        self.filter.SetProbability(self.noise_prob)
         if self.random_seed is not None: 
-            self.trfm.SetSeed(self.random_seed)
+            self.filter.SetSeed(self.random_seed)
 
     def __call__(self, image, mask=None, *args, **kwargs):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            image, _ = apply_transform(self.trfm, image, None, *args, **kwargs)
+            image, _ = apply_transform(self.filter, image, None, *args, **kwargs)
+            if self.min is not None:
+                image_array = sitk.GetArrayFromImage(image)
+                image_array[(image_array < self.min)] = self.min
+                image_array[(image_array > self.max)] = self.max
+                img = sitk.GetImageFromArray(image_array)
+                img.CopyInformation(image)
+                image = img
         return image, mask
 
     def __repr__(self):
@@ -1040,7 +1055,7 @@ class SaltPepperNoise(object):
                           self.p)
 
 
-class GaussianWhiteNoise(object):
+class AdditiveGaussianNoise(object):
     """Alter an image with additive Gaussian white noise.
         This src doesn't have any effect on masks.
    
@@ -1053,19 +1068,19 @@ class GaussianWhiteNoise(object):
             probability of p. The default value is `0.5`.
     """
 
-    def __init__(self, mean=0.01, std=1.0, p=0.5):
+    def __init__(self, mean: float = 0.01, std: float = 1.0, p: float = 0.5):
         self.mean = mean
         self.std = std
         self.p = p
 
-        self.trfm = sitk.AdditiveGaussianNoiseImageFilter()
-        self.trfm.SetMean(self.mean)
-        self.trfm.SetStandardDeviation(self.std)
+        self.filter = sitk.AdditiveGaussianNoiseImageFilter()
+        self.filter.SetMean(self.mean)
+        self.filter.SetStandardDeviation(self.std)
 
     def __call__(self, image, mask=None, *args, **kwargs):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            image, _ = apply_transform(self.trfm, image, None, *args, **kwargs)
+            image, _ = apply_transform(self.filter, image, None, *args, **kwargs)
         return image, mask
 
     def __repr__(self):
@@ -1096,15 +1111,13 @@ class LocalNoiseCalculator(object):
     def __init__(self, radius, p=1.0):
         self.radius = radius
         self.p = p
-        self.trfm = sitk.NoiseImageFilter()
-        self.trfm.SetRadius(self.radius)
+        self.filter = sitk.NoiseImageFilter()
+        self.filter.SetRadius(self.radius)
 
-    def __call__(self, image, mask=None, *args, **kwargs):
-        check_dimensions(image, mask)
+    def __call__(self, image):
         if random.random() <= self.p:
-            image, _ = apply_transform(self.trfm, image, None, *args,
-                                       **kwargs)
-        return image, mask
+            image, _ = apply_transform(self.filter, image, None)
+        return image
 
     def __repr__(self):
         msg = '{} (radius={}, p={})'
@@ -1133,7 +1146,9 @@ class MinMaxScaler(object):
 
     def __init__(self, min_value=0.0, max_value=1.0, p=1.0):
         self.p = p
-        assert min_value < max_value
+        if min_value >= max_value:
+            msg = 'min_value must be smaller than max_value.'
+            raise ValueError(msg)
         self.min_value = min_value
         self.max_value = max_value
 
@@ -1168,12 +1183,12 @@ class UnitNormalize(object):
     """
     def __init__(self, p=1.0):
         self.p = p
-        self.trfm = sitk.NormalizeImageFilter()
+        self.filter = sitk.NormalizeImageFilter()
 
     def __call__(self, image, mask=None, *args, **kwargs):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            image, _ = apply_transform(self.trfm, image, None, *args, **kwargs)
+            image, _ = apply_transform(self.filter, image, None, *args, **kwargs)
         return image, mask
 
     def __repr__(self):
@@ -1182,39 +1197,7 @@ class UnitNormalize(object):
                           self.p)
 
 
-class ConstantNormalizer(object):
-    """ Scales image pixel intensities to make the sum of all pixels equal a
-        user-defined constant.
-
-        This src is especially useful for normalizing a convolution kernel.
-        This src hase no effect on masks.
-
-    Args:
-        sum_constant (float): Constant float value. Normalizer make the sum of
-        all pixels to be equal to this constant. Default value is `1.0`.
-        p (float): The transformation is applied to the input image with a
-            probability of p. The default value is `0.5`.
-    """
-    def __init__(self, sum_constant=1.0, p=0.5):
-        self.sum_constant = sum_constant
-        self.p = p
-        self.trfm = sitk.NormalizeToConstantImageFilter()
-        self.trfm.SetConstant(self.sum_constant)
-
-    def __call__(self, image, mask=None, *args, **kwargs):
-        check_dimensions(image, mask)
-        if random.random() <= self.p:
-            image, _ = apply_transform(self.trfm, image, None, *args, **kwargs)
-        return image, mask
-
-    def __repr__(self):
-        msg = '{} (sum_constant={}, p={})'
-        return msg.format(self.__class__.__name__,
-                          self.sum_constant,
-                          self.p)
-
-
-class WindowIntensityClip(object):
+class WindowLocationClip(object):
     """Casts input pixels to output pixel type and clamps the output pixel
         values to a specified range.
 
@@ -1230,14 +1213,46 @@ class WindowIntensityClip(object):
         self.location = location
         self.window = window
         self.p = p
-        self.trfm = sitk.ClampImageFilter()
+        self.filter = sitk.ClampImageFilter()
 
     def __call__(self, image, mask=None, *args, **kwargs):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            self.trfm.SetLowerBound(self.location - self.window)
-            self.trfm.SetUpperBound(self.location + self.window)
-            image, _ = apply_transform(self.trfm, image, None, *args, **kwargs)
+            self.filter.SetLowerBound(self.location - self.window)
+            self.filter.SetUpperBound(self.location + self.window)
+            image, _ = apply_transform(self.filter, image, None, *args, **kwargs)
+        return image, mask
+
+    def __repr__(self):
+        msg = '{} (location={}, window={}, p={})'
+        return msg.format(self.__class__.__name__,
+                          self.location,
+                          self.window,
+                          self.p)
+
+class Clip(object):
+    """Casts input pixels to output pixel type and clamps the output pixel
+        values to a specified range.
+
+    Args:
+        lower_bound :
+        upper_bound :
+        p (float): The transformation is applied to the input image with a
+            probability of p. The default value is `1.0`.
+    """
+
+    def __init__(self, lower_bound, upper_bound, p=1.0):
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.p = p
+        self.filter = sitk.ClampImageFilter()
+
+    def __call__(self, image, mask=None):
+        check_dimensions(image, mask)
+        if random.random() <= self.p:
+            self.filter.SetLowerBound(self.lower_bound)
+            self.filter.SetUpperBound(self.upper_bound)
+            image, _ = apply_transform(self.filter, image)
         return image, mask
 
     def __repr__(self):
@@ -1248,7 +1263,7 @@ class WindowIntensityClip(object):
                           self.p)
 
 
-class ThresholdIntensityClip(object): 
+class ThresholdClip(object):
     """ Set image values to a user-specified value if they are below, above, or
         between simple threshold values.
 
@@ -1256,10 +1271,10 @@ class ThresholdIntensityClip(object):
         OutsideValue in any of lower or upper states and the pixels must 
         support the operators >= and <=.
     Args: 
-        lower_threshold (float): Lower threshold constant value. The values 
+        lower_bound (float): Lower threshold constant value. The values 
             less than this parameter will be set to outside value. 
             The default is `0.0`.  
-        upper_threshold (float): Upper threshold constant value. The values 
+        upper_bound (float): Upper threshold constant value. The values 
             greater than this parameter will be set to outside value. 
             The default is `1.0`.  
         outside_value (float): The pixel type must support comparison operators. 
@@ -1269,26 +1284,27 @@ class ThresholdIntensityClip(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
-    def __init__(self, lower_threshold=0.0, upper_threshold=1.0, outside_value=0.0,
+    def __init__(self, lower_bound=0.0, upper_bound=1.0, outside_value=0,
                  recalculate_mask=False, p=1.0):
-        self.lower_threshold = lower_threshold
-        self.upper_threshold = upper_threshold
+        if lower_bound > upper_bound:
+            raise ValueError('lower_bound must be smaller than upper_bound.')
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
         self.outside_value = outside_value
         self.recalculate_mask = recalculate_mask
         self.p = p 
-        self.trfm = sitk.ThresholdImageFilter()
-        self.trfm.SetLower(self.lower_threshold)
-        self.trfm.SetUpper(self.upper_threshold)
-        self.trfm.SetOutsideValue(self.outside_value)
+        self.filter = sitk.ThresholdImageFilter()
+        self.filter.SetLower(self.lower_bound)
+        self.filter.SetUpper(self.upper_bound)
+        self.filter.SetOutsideValue(self.outside_value)
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+    def __call__(self, image, mask=None):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            image, _ = apply_transform(self.trfm, image, None, *args,
-                                       **kwargs)
+            image, mask = apply_transform(self.filter, image, mask)
             if self.recalculate_mask is True and mask is not None:
-                upper_mask = sitk.GreaterEqual(image, self.lower_threshold)
-                lower_mask = sitk.LessEqual(image, self.upper_threshold)
+                upper_mask = sitk.GreaterEqual(image, self.lower_bound)
+                lower_mask = sitk.LessEqual(image, self.upper_bound)
                 new_mask = sitk.And(lower_mask, upper_mask)
                 mask = sitk.And(mask, new_mask)
         return image, mask
@@ -1297,14 +1313,14 @@ class ThresholdIntensityClip(object):
         msg = '{} (lower_threshold={}, upper_threshold={}, outside_value={}, ' \
               'recalculate_mask={}, p={})'
         return msg.format(self.__class__.__name__,
-                          self.lower_threshold,
-                          self.upper_threshold,
+                          self.lower_bound,
+                          self.upper_bound,
                           self.outside_value,
                           self.recalculate_mask,
                           self.p)
 
 
-class IntensityLinearTransfer(object):
+class IntensityRangeTransfer(object):
     ''' Apply a window intensity transformation.
 
         Applies a linear transformation to the intensity levels of the input
@@ -1319,22 +1335,27 @@ class IntensityLinearTransfer(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `0.5`.
     '''
-    def __init__(self, window=[-1024, 1024], p=1.0):
+    def __init__(self, window: tuple, cast=None, p=1.0):
+        if len(window) != 2:
+            msg = 'window must be a tuple of two numbers.'
+            raise ValueError(msg)
         self.window = window
+        self.cast = cast
         self.p = p
-        self.trfm = sitk.IntensityWindowingImageFilter()
+        self.filter = sitk.IntensityWindowingImageFilter()
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+    def __call__(self, image, mask=None):
         check_dimensions(image, mask)
         if random.random() <= self.p:
             information = get_stats(image)
-            self.trfm.SetWindowMinimum(information['min'])
-            self.trfm.SetWindowMaximum(information['max'])
-            assert len(self.window) == 2, 'window must contain just lower ' \
-                                          'bound and upper bound values.'
-            self.trfm.SetOutputMinimum(self.window[0])
-            self.trfm.SetOutputMaximum(self.window[1])
-            image, _ = apply_transform(self.trfm, image, None, *args, **kwargs)
+            self.filter.SetWindowMinimum(information['min'])
+            self.filter.SetWindowMaximum(information['max'])
+
+            self.filter.SetOutputMinimum(self.window[0])
+            self.filter.SetOutputMaximum(self.window[1])
+            if self.cast is not None:
+                image = sitk.Cast(image, self.cast)
+            image, _ = apply_transform(self.filter, image)
         return image, mask
 
     def __repr__(self):
@@ -1373,14 +1394,14 @@ class AdaptiveHistogramEqualization(object):
         self.radius = radius
         self.p = p
 
-        self.trfm = sitk.AdaptiveHistogramEqualizationImageFilter()
-        self.trfm.SetAlpha(self.alpha)
-        self.trfm.SetBeta(self.beta)
-        self.trfm.SetRadius(self.radius)
+        self.filter = sitk.AdaptiveHistogramEqualizationImageFilter()
+        self.filter.SetAlpha(self.alpha)
+        self.filter.SetBeta(self.beta)
+        self.filter.SetRadius(self.radius)
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+    def __call__(self, image, mask=None):
         if random.random() <= self.p:
-            image, _ = apply_transform(self.trfm, image, None, *args, **kwargs)
+            image, _ = apply_transform(self.filter, image)
         return image, mask
 
     def __repr__(self):
@@ -1400,32 +1421,34 @@ class MaskImage(object):
             returned as a masked image.
 
     Args:
-        masking_value(float): The masking value of the mask. Defaults is `0`.
+        segment_label(float): The masking value of the mask. Defaults is `0`.
         -- note: Reversing the masking value can get the whole image but the 
             regions with the mask.  
         outside_value(float): The outside value of the mask. Defaults is `0`.
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
-    def __init__(self, masking_value=0, outside_value=0, p=1.0):
-        self.masking_value = masking_value
+    def __init__(self, segment_label=0, outside_value=0, p=1.0):
+        self.segment_label = segment_label
         self.outside_vale = outside_value
         self.p = p
-        self.trfm = sitk.MaskImageFilter()
-        self.trfm.SetMaskingValue(self.masking_value)
-        self.trfm.SetOutsideValue(self.outside_vale)
+        self.filter = sitk.MaskImageFilter()
+        self.filter.SetMaskingValue(self.segment_label)
+        self.filter.SetOutsideValue(self.outside_vale)
 
-    def __call__(self, image, mask, *args, **kwargs):
+    def __call__(self, image, mask):
+        if mask is None:
+            msg = 'mask cannot be None for AdaptiveHistogramEqualization.'
+            raise ValueError(msg)
         check_dimensions(image, mask)
-        assert mask is not None, 'mask can not be empty.'
         if random.random() <= self.p:
-            image = self.trfm.Execute(image, mask)
+            image = self.filter.Execute(image, mask)
         return image, mask
 
     def __repr__(self):
         msg = '{} (masking_value={}, outside_value={}, p={})'
         return msg.format(self.__class__.__name__,
-                          self.masking_value,
+                          self.segment_label,
                           self.outside_vale,
                           self.p)
 
@@ -1452,14 +1475,14 @@ class LabelToRGB(object):
         self.colormap = colormap
         self.background = background
         self.p = p
-        self.trfm = sitk.LabelToRGBImageFilter() 
-        self.trfm.SetColormap(self.colormap)
-        self.trfm.SetBackgroundValue(self.background)
+        self.filter = sitk.LabelToRGBImageFilter() 
+        self.filter.SetColormap(self.colormap)
+        self.filter.SetBackgroundValue(self.background)
 
     def __call__(self, image, mask, *args, **kwargs):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            image = self.trfm.Execute(image)
+            image = self.filter.Execute(image)
         return image, mask
 
     def __repr__(self): 
@@ -1485,21 +1508,22 @@ class FillHole(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
-    def __init__(self, fully_connected=False, foreground_value=None, p=1.0):
-        self.fully_connected = fully_connected
-        self.forground_value = foreground_value
+    def __init__(self, fully_connected=False, foreground_value=1, p=1.0):
         self.p = p
-        self.trfm = sitk.BinaryFillholeImageFilter()
-        if self.fully_connected:
-            self.trfm.FullyConnectedOn()
-        if self.forground_value:
-            self.trfm.SetForegroundValue(self.forground_value)
+        self.filter = sitk.BinaryFillholeImageFilter()
+        if fully_connected:
+            self.filter.FullyConnectedOn()
+        if foreground_value:
+            self.filter.SetForegroundValue(foreground_value)
+        self.foreground_value = foreground_value
+        self.fully_connected = fully_connected
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+    def __call__(self, image, mask=None):
+        if mask is None:
+            raise ValueError('mask cannot be None.')
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            image, mask = apply_transform(self.trfm, image, mask, *args,
-                                          **kwargs)
+            image, mask = apply_transform(self.filter, image, mask)
         return image, mask
 
     def __repr__(self):
@@ -1531,15 +1555,14 @@ class GrayScaleFillHole(object):
     def __init__(self, fully_connected=False, p=1.0):
         self.fully_connected = fully_connected
         self.p = p
-        self.trfm = sitk.GrayscaleFillholeImageFilter()
+        self.filter = sitk.GrayscaleFillholeImageFilter()
         if self.fully_connected is True:
-            self.trfm.FullyConnectedOn()
+            self.filter.FullyConnectedOn()
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+    def __call__(self, image, mask=None):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            image, mask = apply_transform(self.trfm, image, mask, *args,
-                                          **kwargs)
+            image, mask = apply_transform(self.filter, image, mask)
         return image, mask
 
     def __repr__(self):
@@ -1549,7 +1572,7 @@ class GrayScaleFillHole(object):
                           self.p)
 
 
-class LoadDicomDir(object):
+class ReadFromPath(object):
     """ Load image and its corresponding mask from their addresses.
 
         Each address could be a directory address or the DICOM file address.
@@ -1559,66 +1582,11 @@ class LoadDicomDir(object):
     def __init__(self):
         self.reader = sitk.ImageSeriesReader()
 
-    def __call__(self, image_add, mask_add=None, *args, **kwargs):
+    def __call__(self, image_path: str, mask_path:str = None):
         image, mask = None, None
-        # Read image.
-        try:
-            if os.path.isdir(image_add):
-                series_IDs = self.reader.GetGDCMSeriesIDs(image_add)
-                if len(series_IDs) != 1:
-                    raise ValueError(f'ValueError: There are {len(series_IDs)} '
-                                     f'image series in image directory. It is needed '
-                                     f'to be just one image series in each directory.')
-                series_id = series_IDs[0]
-                dicom_names = self.reader.GetGDCMSeriesFileNames(image_add,
-                                                                 series_id)
-                self.reader.SetFileNames(dicom_names)
-                image = self.reader.Execute()
-            elif os.path.isfile(image_add):
-                image = sitk.ReadImage(image_add)
-        except Exception as e:
-            print(e)
-        # Read mask.
-        if mask_add is not None:
-            try:
-                if os.path.isdir(mask_add):
-                    series_IDs = self.reader.GetGDCMSeriesIDs(mask_add)
-                    if len(series_IDs) != 1:
-                        raise ValueError(f'ValueError: There are {len(series_IDs)} '
-                            f'mask series in mask directory. It is needed '
-                            f'to be just one mask series in each directory.')
-                    series_id = series_IDs[0]
-                    dicom_names = self.reader.GetGDCMSeriesFileNames(mask_add,
-                                                                     series_id)
-                    self.reader.SetFileNames(dicom_names)
-                    mask = self.reader.Execute()
-                elif os.path.isfile(mask_add):
-                    mask = sitk.ReadImage(mask_add)
-            except Exception as e:
-                    print(e)
-        return image, mask
-
-    def __repr__(self):
-        msg = '{} ()'
-        return msg.format(self.__class__.__name__)
-
-
-class LoadDicomList(object):
-    """Load image and its corresponding mask from their list of DICOM file addresses.
-        DICOM list addresses need to be sorted in the correct order for reading.
-    Args:
-
-    """
-    def __init__(self):
-        self.reader = sitk.ImageSeriesReader()
-
-    def __call__(self, image_dicom_list, mask_dicom_list=None, *args, **kwargs):
-        image, mask = None, None
-        self.reader.SetFileNames(image_dicom_list)
-        image = self.reader.Execute()
-        if mask_dicom_list is not None:
-            self.reader.SetFileNames(mask_dicom_list)
-            mask = self.reader.Execute()
+        image = read_image(image_path)
+        if mask_path is not None:
+            mask = read_image(mask_path)
         return image, mask
 
     def __repr__(self):
@@ -1632,13 +1600,12 @@ class Compose(object):
     Args: 
         transforms(list): List of transforms to be composed.
     """
-    def __init__(self, transforms):
-        assert isinstance(transforms, list)
+    def __init__(self, transforms: Iterable):
         self.transforms = transforms
 
-    def __call__(self, image, mask=None, *args, **kwargs):
-        for tr in self.transforms:
-            image, mask = tr(image, mask, *args, **kwargs)
+    def __call__(self, image, mask=None):
+        for t in self.transforms:
+            image, mask = t(image, mask)
         return image, mask
 
     def __repr__(self):
@@ -1670,8 +1637,8 @@ class RandomChoices(object):
             _, selected_trfms = list(zip(*selected_trfms))
         else:
             selected_trfms = random.sample(self.transforms, k=self.k)
-        for tr in selected_trfms:
-            image, mask = tr(image, mask, *args, **kwargs)
+        for t in selected_trfms:
+            image, mask = t(image, mask)
         return image, mask
 
     def __repr__(self):
@@ -1690,9 +1657,9 @@ class OneOf(object):
     def __init__(self, transforms):
         self.transforms = transforms
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+    def __call__(self, image, mask=None):
         tr = random.choice(self.transforms)
-        image, mask = tr(image, mask, *args, **kwargs)
+        image, mask = tr(image, mask)
         return image, mask
 
     def __repr__(self):
@@ -1710,10 +1677,10 @@ class RandomOrder(object):
     def __init__(self, transforms):
         self.transforms = transforms
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+    def __call__(self, image, mask=None):
         random.shuffle(self.transforms)
-        for tr in self.transforms:
-            image, mask = tr(image, mask, *args, **kwargs)
+        for t in self.transforms:
+            image, mask = t(image, mask)
         return image, mask
 
     def __repr__(self): 
@@ -1726,8 +1693,8 @@ class Lambda(object):
     """ Apply a cutomized transformation.
 
     Args:
-        lambd (function): Lambda/function to be used for src.
-        sitk_lambda(bool): If true lambda function is aSimpleITK function,
+        lambda_func (function): Lambda/function to be used for src.
+        sitk_lambda(bool): If true lambda function is a SimpleITK function,
             otherwise the lambda function must be numpy function.
         --note: Input images and mask are compatible with lambda function.
         inclue_mask(bool): If true function will be applied to the input
@@ -1735,32 +1702,19 @@ class Lambda(object):
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
-    def __init__(self, lambd, sitk_lambda=True, include_mask=True, p=1.0):
-        assert callable(lambd), repr(
-            type(lambd).__name__) + ' object is not callable'
-        self.lambd = lambd
-        self.sitk_lambda = sitk_lambda
-        self.include_mask = include_mask
-        self.p = p 
+    def __init__(self, image_transformer: Callable = None,
+                 mask_transformer: Callable = None, p=1.0):
+        self.image_transformer = image_transformer
+        self.mask_transformer = mask_transformer
+        self.p = p
 
     def __call__(self, image, mask=None, *args, **kwargs):
-        if self.sitk_lambda:
-            error_message = 'Input {} is not of type SimpleITK.SimpleITK.Image'
-            assert isinstance(image, sitk.SimpleITK.Image), error_message.format('image')
-            if self.include_mask:
-                assert isinstance(mask, sitk.SimpleITK.Image), error_message.format('mask')
-        else:
-            error_message = 'Input {} is not of type numpy.ndarray'
-            assert isinstance(image, np.ndarray), error_message.format('image')
-            if self.include_mask:
-                assert isinstance(mask, np.ndarray), error_message.format('mask')
-        if random.random() <= self.p: 
-            image = self.lambd(image)
-            if mask is not None and self.include_mask is True:
-                mask = self.lambd(mask)
+        if random.random() <= self.p:
+            if image is not None:
+                image = self.image_transformer(image, *args, **kwargs)
+            if mask is not None:
+                mask = self.mask_transformer(mask, *args, **kwargs)
         return image, mask
 
     def __repr__(self):
         return self.__class__.__name__ + '()'
-
-
