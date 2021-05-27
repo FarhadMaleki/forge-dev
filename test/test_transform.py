@@ -9,43 +9,86 @@ EPSILON = 1E-6
 class TestTransform(unittest.TestCase):
 
     @staticmethod
-    def load_cube(example='small'):
+    def load_cube(example: str = 'small') -> sitk.Image:
         """
-        This image is a 7x7x7 cube of intensity value of 1
-        inside a 11x11x11 canvas. The background intensity
-        is 0.
-        size: small, medium
-                # the stripe image is a 20x20x20 image, where for the
-        #   hole is a 20x20x20 image created as as follows:
-                I = numpy.zeros((20, 20, 20), dtype=np.uint8) - 1024
-                I[3: 17, 3: 17, 3: 17] = 100
-                I[5: 15, 5: 15, 5: 15] = 50
-                I[9: 11, 9: 11, 9: 11] = 0
-                M = numpy.zeros((20, 20, 20), dtype=np.uint8)
-                M[3: 17, 3: 17, 3: 17] = 2
-                M[5: 15, 5: 15, 5: 15] = 1
-                M[9: 11, 9: 11, 9: 11] = 0
-
-            M = np.zeros((20, 20, 20), dtype=np.uint) -1024
-            X = np.zeros
-            I = 100 *(x-w) - 1024(
-            layered is 20x20x20 image I, where I[
+        This module is used to load sample images used to test methods.
+        Args:
+            example: The ID of the image/mask pair to be returned.
+                * small: This image is a 7x7x7 cube of intensity value of 1
+                    centered inside a 11x11x11 canvas. The background intensity is 0.
+                    The binary mask is the same as the image.
+                * medium: This image is a 41x41x41 cube of intensity value of 1
+                    centered inside a 101x101x101 canvas. The background intensity
+                    is 0. The binary mask is the same as the image.
+                * stripe: stripe image is the same as the medium image.
+                    The mask, however, is different.
+                    M[i, j, k] = i for 0 <= j, k < 20
+                * hole: hole is a 20x20x20 image created as follows:
+                   The image "I" and "M", which are 3D arrays of zie 20x20x20,
+                   are initialized as zeros. Then I and M are updated as follows:
+                   I[3: 17, 3: 17, 3: 17] = 100
+                   I[5: 15, 5: 15, 5: 15] = 50
+                   I[9: 11, 9: 11, 9: 11] = 0
+                   M[3: 17, 3: 17, 3: 17] = 2
+                   M[5: 15, 5: 15, 5: 15] = 1
+                   M[9: 11, 9: 11, 9: 11] = 0
+        Returns:
+            sitk.Image: an image and its mask.
+            sitk.Image: a mask for the image.
         """
-        name = {'medium': 2,
-                'small': 1,
-                'stripe': '_stripe_20x20',
-                'hole': '_hole_20x20'}
+        name = {
+            'small': 1,
+            'medium': 2,
+            'stripe': '_stripe_20x20',
+            'hole': '_hole_20x20'}
         image_path = f'test/data/image{name[example]}.nrrd'
         mask_path = f'test/data/mask{name[example]}.nrrd'
         image = sitk.ReadImage(image_path)
         mask = sitk.ReadImage(mask_path)
         return image, mask
 
-    # def setUp(self):
-    #     image_path = 'test/data/image2.nrrd'
-    #     mask_path = 'test/data/mask2.nrrd'
-    #     image = sitk.ReadImage(image_path)
-    #     mask = sitk.ReadImage(mask_path)
+    def test_Pad(self):
+        image, mask = TestTransform.load_cube('hole')
+        # Constant padding with inferred constant value
+        PADING = [1, 1, 1]
+        tsfm = tr.Pad(PADING, method='constant', constant=None,
+                      background_label=3, pad_lower_bound=True,
+                      pad_upper_bound=True, p=1.0)
+        img, msk = tsfm(image, mask=mask)
+        self.assertEqual(list(img.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
+        self.assertEqual(list(msk.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
+        self.assertEqual(set(np.unique(sitk.GetArrayFromImage(msk))), {0, 1, 2, 3})
+        # Constant padding with predefined constant value
+        PADING = [1, 1, 1]
+        CONSTANT = 1024
+        tsfm = tr.Pad(PADING, method='constant', constant=CONSTANT,
+                      background_label=3, pad_lower_bound=True,
+                      pad_upper_bound=True, p=1.0)
+        img, msk = tsfm(image, mask=mask)
+        self.assertEqual(list(img.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
+        self.assertEqual(list(msk.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
+        self.assertEqual(set(np.unique(sitk.GetArrayFromImage(msk))), {0, 1, 2, 3})
+        self.assertEqual(set(np.unique(sitk.GetArrayFromImage(img))), {0, 50, 100, 1024, -1024})
+        # Mirror padding
+        PADING = [1, 2, 3]
+        tsfm = tr.Pad(PADING, method='mirror',
+                      background_label=3, pad_lower_bound=True,
+                      pad_upper_bound=True, p=1.0)
+        img, msk = tsfm(image, mask=mask)
+        self.assertEqual(list(img.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
+        self.assertEqual(list(msk.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
+        self.assertEqual(set(np.unique(sitk.GetArrayFromImage(msk))), {0, 1, 2, 3})
+        self.assertEqual(set(np.unique(sitk.GetArrayFromImage(img))), {0, 50, 100, -1024})
+        # Wrap padding
+        PADING = [3, 2, 1]
+        tsfm = tr.Pad(PADING, method='mirror',
+                      background_label=3, pad_lower_bound=True,
+                      pad_upper_bound=True, p=1.0)
+        img, msk = tsfm(image, mask=mask)
+        self.assertEqual(list(img.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
+        self.assertEqual(list(msk.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
+        self.assertEqual(set(np.unique(sitk.GetArrayFromImage(msk))), {0, 1, 2, 3})
+        self.assertEqual(set(np.unique(sitk.GetArrayFromImage(img))), {0, 50, 100, -1024})
 
     def test_ForegroundMask(self):
         image, mask = TestTransform.load_cube('small')
@@ -1015,10 +1058,26 @@ class TestTransform(unittest.TestCase):
 
 
 class MockTransform(object):
+    """ This class is used for testing Transform objects.
+
+    Args:
+        identifier: An identifier assigned to the MockTransform object.
+    """
+
     def __init__(self, identifier):
         self.identifier = identifier
 
     def __call__(self, image: list, mask: list = []):
+        """ Append an element to the end of image and mask lists.
+
+        Args:
+            image (list): It could be a list of arbitrary values.
+            image (list): It could be a list of arbitrary values.
+
+        Returns:
+            list: the list resulting from appending the object identifier to the image.
+            list: the list resulting from appending the object identifier to the mask.
+        """
         assert isinstance(image, list)
         if mask is not None:
             assert isinstance(image, list)

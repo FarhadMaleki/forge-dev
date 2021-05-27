@@ -1,33 +1,64 @@
-import os
 import random
-import numpy as np 
-import SimpleITK as sitk
-import logging
 from numbers import Number
-from typing import List, Set, Dict, Tuple, Optional, Union, Iterable, Callable
+from typing import List, Set, Dict, Tuple, Optional, Union, Iterable, Callable, Sequence
+
+import numpy as np
+import SimpleITK as sitk
 
 from utils import get_stats
 from utils import read_image
 from utils import check_dimensions
+from utils import sitk_to_python_type
 
-# Number = Union[int, float, np.int8, np.int16, np.int32,
-#                 np.int64, np.uint8, np.uint16, np.uint32,
-#                 np.uint64]
 
 EPSILON = 1E-8
 DIMENSION = 3
-logging.basicConfig(format='%(levelname)s:%(message)s',
-                    level=logging.DEBUG)
 
-def apply_transform(trfm, image, mask=None, *args, **kwargs):
-    """Apply a sitk src on the input image and the input mask if exist."""
-    image = trfm.Execute(image, *args, **kwargs)
+
+def apply_transform(transformation, image: sitk.Image,
+                    mask: sitk.Image = None, *args, **kwargs):
+    """ Execute a SimpleITK transformation on image and if applicable on a mask image.
+
+    Args:
+        transformation: A SimpleITK transformation.
+        image: A simpleITK Image object that is the image to be transformed.
+        mask: A simpleITK Image object that is the contour(s) for the image.
+    """
+    image = transformation.Execute(image, *args, **kwargs)
     if mask is not None:
-        mask = trfm.Execute(mask, *args, **kwargs)
+        mask = transformation.Execute(mask, *args, **kwargs)
     return image, mask
 
 
 def expand_parameters(param, dimension, name, convert_fn=None):
+    """ A helper function for making boundary lists.
+
+    The boundary list must be a list of tuples of size 2. For example,
+        in a 3D context this should be:
+
+
+    Args:
+        param: the value used to create the boundary list.
+            In a 3D context:
+            * If param is a scale s, the boundary list will be
+                [(-|s|, |s|), (-|s|, |s|), (-|s|, |s|)], where |s|
+                represents the absolute value of s.
+            * If param is a list of 3 scalar [a, b, c], the
+                boundary list will be
+                [(-|a|, |a|), (-|b|, |b|), (-|c|, |c|)], where |x|
+                represents the absolute value of x.
+            * param can also have the following form:
+                [(x_min, x_max), (y_min, y_max), (z_min, z_max)]
+        dimension: An integer value representing the dimension of images.
+        name: The name used for raising errors, if required.
+        convert_fn: if not null a conversion function will be applied to
+            the final values.
+    Returns:
+        A numpy array of the following form
+            numpy.array([(x_min, x_max), (y_min, y_max), (z_min, z_max)]).
+    Raises:
+         ValueError: If the parameter does not follow one of the valid forms.
+    """
     error_message = (f'{name} must be a numerical scalar, a list of {dimension} numbers,'
                      f' or list of {dimension} tuples each of  2 numbers.')
     if isinstance(param, np.complex):
@@ -55,99 +86,116 @@ def expand_parameters(param, dimension, name, convert_fn=None):
     return param
 
 class Pad(object):
-    """Pad an image and a mask using three methods include constant padding,
+    """ Pad an image and a mask (if applicable).
+
+    The available options for padding are constant padding,
         mirror padding, and wrap padding.
 
     Args:
-        padding (int, sequence): An iterable of 3 integer numbers to be used as
-            the number of cells for padding across each dimension of an image.
-            If an integer value is provided, it will be considered as
-            a list tiled with 3 padding values.
-        --note: Dimensions need to be width by height by depth in three
-            dimensions. In each dimension, padding will be applied before and
-            after each dimension.
-        constant (float): A value to be used when assigning value to the
-            padded cells. This parameter needs to be assigned if constant pad
-            is needed and use_constant parameter is True. Default value is `0.0`.
-        use_constant(bool): Boolean parameter if constant pad is used.
-            Default value is `True`.
-        use_mirror(bool): Boolean parameter if Mirror padding is used.
-            Default value is `False`.
-        use_wrap(bool); Boolean parameter if Wrap padding is used.
-            Default is `False`.
-        pad_lower_bound (bool): True if padding should be applied to the
-            lower-bound of each dimension. Default is `True`.
-        pad_upper_bound (bool): True if padding should be applied to the
-            upper-bound of each dimension. Default is `True`.
+        padding: The padding size. The acceptable values are an positive
+            integer and a sequence of 3 positive integers, used for padding
+            width (x), height (y), and depth (z) dimensions, respectively.
+            If an integer value is provided, it will be considered as the
+            padding value for all dimensions.
+            Note that padding must be a positive integer.
+        method: The method used for padding. Supported options are as follows:
+            * constant: Uses a constant value for padding. Default is constant.
+            * mirror: Considers the image edge as mirror and use the
+                reflection of values inside the image as the values for
+                voxels inf the padded area.
+            * wrap: Uses a wrap padding.
+        constant: The constant value used for padding. This will be
+            ignored if method is not constant. The default is 0.
+        background_label: The label used in the mask image for the
+            padded region. The default is 0.
+        pad_lower_bound (bool): if True padding will be applied to the
+            lower-boundary of each dimension. Default is True.
+        pad_upper_bound (bool): if True padding will be applied to the
+            upper-boundary of each dimension. Default is True.
         p (float): The transformation is applied to the input image with a
-            probability of p. The default value is `1.0`.
+            probability of p. The default value is 1.0.
     """
 
-    def __init__(self, padding, constant=None, use_constant=True,
-                 use_mirror=False, use_wrap=False, pad_lower_bound=True,
-                 pad_upper_bound=True, mask_background=0, p=1.0):
-        if use_constant == False and use_mirror == False and use_wrap == False:
-            raise ValueError('One of the padding types(`constat`, `mirror`, '
-                             '`wrap`) must be selected.')
-        self.padding = padding
+    def __init__(self, padding: Union[int, Tuple[int, int, int]],
+                 method: str = 'constant',
+                 constant: Union[int, float] = 0,
+                 background_label: int = 0,
+                 pad_lower_bound=True, pad_upper_bound=True,
+                 p=1.0):
         self.constant = constant
-        self.use_constant = use_constant
-        self.use_mirror = use_mirror
-        self.use_wrap = use_wrap
+        self.method = method.lower()
         self.pad_lower_bound = pad_lower_bound
         self.pad_upper_bound = pad_upper_bound
-        self.mask_background = mask_background
+        self.background_label = background_label
+        self.pad_lower_bound = pad_lower_bound
+        self.pad_upper_bound = pad_upper_bound
         self.p = p
-        if not isinstance(self.padding, (tuple, list)):
-            raise ValueError('padding should be a tuple of the same dimension '
-                             'as image')
-        self.padding = (np.array(padding)).tolist()
-        if self.use_constant:
-            self.tsfm = sitk.ConstantPadImageFilter()
-            if constant is not None:
-                self.tsfm.SetConstant(constant)
-        elif self.use_mirror:
-            self.tsfm = sitk.MirrorPadImageFilter()
-        else:
-            self.tsfm = sitk.WrapPadImageFilter()
-        if pad_lower_bound is True:
-            self.tsfm.SetPadLowerBound(self.padding)
-        if pad_upper_bound is True:
-            self.tsfm.SetPadUpperBound(self.padding)
+        if isinstance(padding, int):
+            if padding < 0:
+                raise ValueError('padding must be non-negative.')
+            padding = [padding for _ in range(DIMENSION)]
 
-    def __call__(self, image, mask=None, *args, **kwargs):
+        if not isinstance(padding, (tuple, list)):
+            msg = 'padding must be an integer number, a tuple, or a list.'
+            raise ValueError(msg)
+
+        self.padding = list(padding)
+        if self.method == 'constant':
+            self.filter = sitk.ConstantPadImageFilter()
+        elif self.method == 'mirror':
+            self.filter = sitk.MirrorPadImageFilter()
+        elif self.method == 'wrap':
+            self.filter = sitk.WrapPadImageFilter()
+        else:
+            msg = 'Valid values for method are constant, mirror, and wrap.'
+            raise ValueError(msg)
+        if self.pad_lower_bound is True:
+            self.filter.SetPadLowerBound(self.padding)
+        if self.pad_upper_bound is True:
+            self.filter.SetPadUpperBound(self.padding)
+
+    def __call__(self, image, mask=None):
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            constant = self.constant
-            if (self.use_constant is True) and (self.constant is None):
-                INSIDE_VALUE = 1
-                OUTSIDE_VALUE = 0
-                bin_image = sitk.OtsuThreshold(image,
-                                               INSIDE_VALUE,
-                                               OUTSIDE_VALUE)
-                # Get the median background intensity for padding
-                lbl_intensity_stats_filter = sitk.LabelIntensityStatisticsImageFilter()
-                lbl_intensity_stats_filter.SetBackgroundValue(OUTSIDE_VALUE)
-                lbl_intensity_stats_filter.Execute(bin_image, image)
-                constant = lbl_intensity_stats_filter.GetMedian(INSIDE_VALUE)
-            self.tsfm.SetConstant(constant)
-            image = self.tsfm.Execute(image)
-            self.tsfm.SetConstant(self.mask_background)
-            mask = self.tsfm.Execute(mask)
+            if self.method == 'constant':
+                constant = self.constant
+                if constant is None:
+                    INSIDE_VALUE = 1
+                    OUTSIDE_VALUE = 0
+                    bin_image = sitk.OtsuThreshold(image,
+                                                   INSIDE_VALUE,
+                                                   OUTSIDE_VALUE)
+                    # Get the median background intensity for padding
+                    stats_filter = sitk.LabelIntensityStatisticsImageFilter()
+                    stats_filter.SetBackgroundValue(OUTSIDE_VALUE)
+                    stats_filter.Execute(bin_image, image)
+                    constant = stats_filter.GetMedian(INSIDE_VALUE)
+                    # Cast constant type to image type
+                    constant = sitk_to_python_type(image.GetPixelIDValue())(constant)
+                self.filter.SetConstant(constant)
+            image = self.filter.Execute(image)
+            if mask is not None:
+                filter = sitk.ConstantPadImageFilter()
+                if self.pad_lower_bound is True:
+                    filter.SetPadLowerBound(self.padding)
+                if self.pad_upper_bound is True:
+                    filter.SetPadUpperBound(self.padding)
+                label = sitk_to_python_type(mask.GetPixelIDValue())(self.background_label)
+                filter.SetConstant(label)
+                mask = filter.Execute(mask)
         return image, mask
 
     def __repr__(self):
         msg = '{} (Padding={}, Constant={}, use_constant={}, ' \
               'use_mirror={}, use_wrap={}, Padding lower-bound={}, Padding ' \
-              'upper-bound={}, p={})'
+              'upper-bound={}, background_label={}, p={})'
         return msg.format(self.__class__.__name__,
                           self.padding,
                           self.constant,
-                          self.use_constant,
-                          self.use_mirror,
-                          self.use_wrap,
+                          self.method,
                           self.pad_lower_bound,
                           self.pad_upper_bound,
+                          self.background_label,
                           self.p)
 
 
@@ -408,7 +456,7 @@ class RandomRotation3D(object):
     """Rotate the given CT image by x, y, z angles.
 
     Args:
-        angles (sequence): The upper bound rotation angles in degrees. 
+        angles (sequence): The upper bound rotation angles in degrees.
             The real degree with be sampled betweeen [-angle, angle] rotation
             over x, y, z in order. default is `(10, 10, 10)`.
         interpolator(sitk interpolator): interpolator to apply on
@@ -428,7 +476,7 @@ class RandomRotation3D(object):
                                  f'length 3 as a angle or each dimension. Got {len(angles)}.')
         self.x_angle, self.y_angle, self.z_angle = angles
         self.interpolator = interpolator
-    
+
     def define_transform(self, axes, angle, center):
         trfm = sitk.VersorTransform(axes, np.deg2rad(angle))
         trfm.SetCenter(center)
@@ -506,7 +554,7 @@ class Flip(object):
 
 
 class RandomFlipX(object):
-    ''' TODO: 
+    ''' TODO:
     '''
 
     def __init__(self, p=0.5):
@@ -530,7 +578,7 @@ class RandomFlipX(object):
 
 
 class RandomFlipY(object):
-    ''' TODO: 
+    ''' TODO:
     '''
 
     def __init__(self, p=0.5):
@@ -554,7 +602,7 @@ class RandomFlipY(object):
 
 
 class RandomFlipZ(object):
-    ''' TODO: 
+    ''' TODO:
     '''
 
     def __init__(self, p=0.5):
@@ -597,9 +645,9 @@ class Crop(object):
         self.size = size
         self.index = index
         self.p = p
-        self.tsfm = sitk.RegionOfInterestImageFilter()
-        self.tsfm.SetIndex(index)
-        self.tsfm.SetSize(size)
+        self.filter = sitk.RegionOfInterestImageFilter()
+        self.filter.SetIndex(index)
+        self.filter.SetSize(size)
 
     def __call__(self, image, mask=None, *args, **kwargs):
         check_dimensions(image, mask)
@@ -607,7 +655,7 @@ class Crop(object):
         if all(end_coordinate > np.array(image.GetSize())):
             raise ValueError('size + index cannot be greater than image size')
         if random.random() <= self.p:
-            image, mask = apply_transform(self.tsfm, image, mask)
+            image, mask = apply_transform(self.filter, image, mask)
         return image, mask
 
     def __repr__(self):
@@ -664,7 +712,7 @@ class RandomCrop(object):
 
 class CenterCrop(object):
     """ Crop an image and a mask with a constant value.
-   
+
     Args:
         output_size (int, list): An iterable of 3 integer numbers to be used as
             the output size of each dimension of an image.
@@ -683,7 +731,7 @@ class CenterCrop(object):
     def __init__(self, size, p=1.0):
         self.output_size = np.array(size, dtype='uint')
         self.p = p
-        self.tsfm = sitk.RegionOfInterestImageFilter()
+        self.filter = sitk.RegionOfInterestImageFilter()
 
     def __call__(self, image, mask=None):
         check_dimensions(image, mask)
@@ -697,9 +745,9 @@ class CenterCrop(object):
             index = np.array([(s - o)//2
                               for s, o in zip(image_size, self.output_size)],
                              dtype='uint')
-            self.tsfm.SetSize(self.output_size.tolist())
-            self.tsfm.SetIndex(index.tolist())
-            image, mask = apply_transform(self.tsfm, image, mask)
+            self.filter.SetSize(self.output_size.tolist())
+            self.filter.SetIndex(index.tolist())
+            image, mask = apply_transform(self.filter, image, mask)
         return image, mask
 
     def __repr__(self):
@@ -809,8 +857,8 @@ class Resize(object):
         self.default_image_pixel_value = default_image_pixel_value
         self.default_mask_pixel_value = default_mask_pixel_value
         self.p = p
-        self.tsfm = sitk.ResampleImageFilter()
-        self.tsfm.SetTransform(sitk.Transform())
+        self.filter = sitk.ResampleImageFilter()
+        self.filter.SetTransform(sitk.Transform())
 
 
 
@@ -828,27 +876,27 @@ class Resize(object):
                                                                   image.GetSpacing(),
                                                                   self.size)]
             # Resize image.
-            self.tsfm.SetDefaultPixelValue(self.default_image_pixel_value)
-            self.tsfm.SetSize(self.size)
-            self.tsfm.SetOutputSpacing(spacing)
-            self.tsfm.SetOutputOrigin(image.GetOrigin())
-            self.tsfm.SetOutputDirection(image.GetDirection())
-            self.tsfm.SetOutputPixelType(image.GetPixelIDValue())
-            self.tsfm.SetInterpolator(self.interpolator)
-            image = self.tsfm.Execute(image)
+            self.filter.SetDefaultPixelValue(self.default_image_pixel_value)
+            self.filter.SetSize(self.size)
+            self.filter.SetOutputSpacing(spacing)
+            self.filter.SetOutputOrigin(image.GetOrigin())
+            self.filter.SetOutputDirection(image.GetDirection())
+            self.filter.SetOutputPixelType(image.GetPixelIDValue())
+            self.filter.SetInterpolator(self.interpolator)
+            image = self.filter.Execute(image)
             # Resize mask
             if mask is not None:
                 spacing = [img_size * img_spacing / out_size
                            for img_size, img_spacing, out_size in zip(mask.GetSize(),
                                                                       mask.GetSpacing(),
                                                                       self.size)]
-                self.tsfm.SetDefaultPixelValue(self.default_mask_pixel_value)
-                self.tsfm.SetOutputSpacing(spacing)
-                self.tsfm.SetOutputOrigin(mask.GetOrigin())
-                self.tsfm.SetOutputDirection(mask.GetDirection())
-                self.tsfm.SetOutputPixelType(mask.GetPixelIDValue())
-                self.tsfm.SetInterpolator(sitk.sitkNearestNeighbor)
-                mask = self.tsfm.Execute(mask)
+                self.filter.SetDefaultPixelValue(self.default_mask_pixel_value)
+                self.filter.SetOutputSpacing(spacing)
+                self.filter.SetOutputOrigin(mask.GetOrigin())
+                self.filter.SetOutputDirection(mask.GetDirection())
+                self.filter.SetOutputPixelType(mask.GetPixelIDValue())
+                self.filter.SetInterpolator(sitk.sitkNearestNeighbor)
+                mask = self.filter.Execute(mask)
             return image, mask
 
     def __repr__(self):
@@ -860,14 +908,14 @@ class Resize(object):
                           self.p)
 
 
-class Expand(object): 
+class Expand(object):
     """Expand the size of an image by an integer factor in each dimension.
     This filter will produce an output with different pixel spacing that its input image such that:
 
 
-    Args: 
-        expand_factors (int, sequence): Sequence of int values interpreted the 
-            increasing factor for each dimension. Values are clamped to a 
+    Args:
+        expand_factors (int, sequence): Sequence of int values interpreted the
+            increasing factor for each dimension. Values are clamped to a
             minimum value of 1. Default is `1` for all dimensions.
         interpolator (itk::simple::InterpolatorEnum Interpolator): The interpolator
             function. The default is `LinearInterpolateImageFunction <InputImageType,
@@ -884,9 +932,9 @@ class Expand(object):
         self.expansion = expansion
         self.interpolator = interpolator
         self.p = p
-        self.tsfm = sitk.ExpandImageFilter()
-        self.tsfm.SetExpandFactors(self.expansion)
-        self.tsfm.SetInterpolator(self.interpolator)
+        self.filter = sitk.ExpandImageFilter()
+        self.filter.SetExpandFactors(self.expansion)
+        self.filter.SetInterpolator(self.interpolator)
 
     def __call__(self, image, mask=None):
         check_dimensions(image, mask)
@@ -894,14 +942,14 @@ class Expand(object):
             if len(self.expansion) != image.GetDimension():
                 msg = 'Image dimension must equal the length of expansion.'
                 raise ValueError(msg)
-            image, mask = apply_transform(self.tsfm, image, mask)
+            image, mask = apply_transform(self.filter, image, mask)
         return image, mask
 
     def __repr__(self):
         msg = '{} (expand_factors={}, interpolator={}, p={})'
-        return msg.format(self.__class__.__name__, 
+        return msg.format(self.__class__.__name__,
                           self.expand_factors,
-                          self.interpolator, 
+                          self.interpolator,
                           self.p)
 
 
@@ -919,8 +967,8 @@ class Shrink(object):
         self.shrinkage = shrinkage
         self.p = p
 
-        self.tsfm = sitk.BinShrinkImageFilter()
-        self.tsfm.SetShrinkFactors(self.shrinkage)
+        self.filter = sitk.BinShrinkImageFilter()
+        self.filter.SetShrinkFactors(self.shrinkage)
 
     def __call__(self, image, mask=None):
         check_dimensions(image, mask)
@@ -928,7 +976,7 @@ class Shrink(object):
             msg = 'Image dimension must equal the length of shrinkage.'
             raise ValueError(msg)
         if random.random() <= self.p:
-            image, mask = apply_transform(self.tsfm, image, mask)
+            image, mask = apply_transform(self.filter, image, mask)
         return image, mask
 
     def __repr__(self):
@@ -941,7 +989,7 @@ class Shrink(object):
 class Invert(object):
     """Invert the intensity of an image with a constant value.
         This src does not affect mask.
-   
+
     Args:
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `0.5`.
@@ -949,7 +997,7 @@ class Invert(object):
 
     def __init__(self, maximum: int=None, p=0.5):
         self.p = p
-        self.tsfm = sitk.InvertIntensityImageFilter()
+        self.filter = sitk.InvertIntensityImageFilter()
         self.maximum = maximum
 
     def __call__(self, image, mask=None, *args, **kwargs):
@@ -960,8 +1008,8 @@ class Invert(object):
                 maximum = stat_dict['max']
             else:
                 maximum = self.maximum
-            self.tsfm.SetMaximum(maximum)
-            image, _ = apply_transform(self.tsfm, image)
+            self.filter.SetMaximum(maximum)
+            image, _ = apply_transform(self.filter, image)
         return image, mask
 
     def __repr__(self):
@@ -1008,7 +1056,7 @@ class SaltPepperNoise(object):
         pepper noise. This src doesn't have any effect on mask.
 
     Args:
-        noise_prob (float): Noise probablity to be applied on each image. 
+        noise_prob (float): Noise probablity to be applied on each image.
             Default is `0.01`.
         random_seed (int): Random integer number to set seed for random noise
             generation. Default is `None`.
@@ -1031,7 +1079,7 @@ class SaltPepperNoise(object):
 
         self.filter = sitk.SaltAndPepperNoiseImageFilter()
         self.filter.SetProbability(self.noise_prob)
-        if self.random_seed is not None: 
+        if self.random_seed is not None:
             self.filter.SetSeed(self.random_seed)
 
     def __call__(self, image, mask=None, *args, **kwargs):
@@ -1050,20 +1098,20 @@ class SaltPepperNoise(object):
     def __repr__(self):
         msg = '{} (noise_prob={}, random_seed={}, p={})'
         return msg.format(self.__class__.__name__,
-                          self.noise_prob, 
-                          self.random_seed, 
+                          self.noise_prob,
+                          self.random_seed,
                           self.p)
 
 
 class AdditiveGaussianNoise(object):
     """Alter an image with additive Gaussian white noise.
         This src doesn't have any effect on masks.
-   
+
     Args:
-        mean (float): Mean value for using in gaussian distribution. 
+        mean (float): Mean value for using in gaussian distribution.
             Default is `0.0`.
         std (int): Standard deviation value for using in gaussian distribution.
-            Default is `1.0`. 
+            Default is `1.0`.
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `0.5`.
     """
@@ -1086,8 +1134,8 @@ class AdditiveGaussianNoise(object):
     def __repr__(self):
         msg = '{} (mean={}, std={}, p={})'
         return msg.format(self.__class__.__name__,
-                          self.mean, 
-                          self.std, 
+                          self.mean,
+                          self.std,
                           self.p)
 
 
@@ -1177,7 +1225,7 @@ class UnitNormalize(object):
 
         This src take no action on masks.
 
-    Args: 
+    Args:
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
@@ -1267,20 +1315,20 @@ class ThresholdClip(object):
     """ Set image values to a user-specified value if they are below, above, or
         between simple threshold values.
 
-    -- Note: That pixels equal to the threshold value are not set to 
-        OutsideValue in any of lower or upper states and the pixels must 
+    -- Note: That pixels equal to the threshold value are not set to
+        OutsideValue in any of lower or upper states and the pixels must
         support the operators >= and <=.
-    Args: 
-        lower_bound (float): Lower threshold constant value. The values 
-            less than this parameter will be set to outside value. 
-            The default is `0.0`.  
-        upper_bound (float): Upper threshold constant value. The values 
-            greater than this parameter will be set to outside value. 
-            The default is `1.0`.  
-        outside_value (float): The pixel type must support comparison operators. 
+    Args:
+        lower_bound (float): Lower threshold constant value. The values
+            less than this parameter will be set to outside value.
+            The default is `0.0`.
+        upper_bound (float): Upper threshold constant value. The values
+            greater than this parameter will be set to outside value.
+            The default is `1.0`.
+        outside_value (float): The pixel type must support comparison operators.
             The default value is `0.0`.
         recalculate_mask (bool): If True and the mask is not equal None, the pixels
-            which are not in the threshold range will be removed from the mask. 
+            which are not in the threshold range will be removed from the mask.
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
@@ -1292,7 +1340,7 @@ class ThresholdClip(object):
         self.upper_bound = upper_bound
         self.outside_value = outside_value
         self.recalculate_mask = recalculate_mask
-        self.p = p 
+        self.p = p
         self.filter = sitk.ThresholdImageFilter()
         self.filter.SetLower(self.lower_bound)
         self.filter.SetUpper(self.upper_bound)
@@ -1327,7 +1375,7 @@ class IntensityRangeTransfer(object):
             image that are inside a user-defined interval. Values below this
             interval are mapped to a constant. Values over the interval are
             mapped to another constant.
-    
+
     Args:
         window (sequence): Sequence  that contains lower bound and upper
         bound for the output image, (lower, upper).  Default sequence is
@@ -1422,8 +1470,8 @@ class MaskImage(object):
 
     Args:
         segment_label(float): The masking value of the mask. Defaults is `0`.
-        -- note: Reversing the masking value can get the whole image but the 
-            regions with the mask.  
+        -- note: Reversing the masking value can get the whole image but the
+            regions with the mask.
         outside_value(float): The outside value of the mask. Defaults is `0`.
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
@@ -1456,26 +1504,26 @@ class MaskImage(object):
 class LabelToRGB(object):
     """ Apply a colormap to a label image.
 
-        The set of colors is a good selection of distinct colors. 
+        The set of colors is a good selection of distinct colors.
             The user can choose to use a background value. In that case,
             a gray pixel with the same intensity than the background label
             is produced.
     -- Note that this transformation takes no action on the input mask.
             But to be usable as a part of a pipeline, the src takes mask
             as its second input.
-    Args: 
-        colormap (int, sequence): The colormap with an integer value 
-            or a sequence of 3 integer values. If the input is an integer, 
-            It will used for all three color. 
+    Args:
+        colormap (int, sequence): The colormap with an integer value
+            or a sequence of 3 integer values. If the input is an integer,
+            It will used for all three color.
         background (int): The background value for the image.
         p (float): The transformation is applied to the input image with a
             probability of p. The default value is `1.0`.
     """
-    def __init__(self, colormap, background, p=1.0): 
+    def __init__(self, colormap, background, p=1.0):
         self.colormap = colormap
         self.background = background
         self.p = p
-        self.filter = sitk.LabelToRGBImageFilter() 
+        self.filter = sitk.LabelToRGBImageFilter()
         self.filter.SetColormap(self.colormap)
         self.filter.SetBackgroundValue(self.background)
 
@@ -1485,11 +1533,11 @@ class LabelToRGB(object):
             image = self.filter.Execute(image)
         return image, mask
 
-    def __repr__(self): 
+    def __repr__(self):
         msg = '{} (size={}, index={}, p={})'
-        return msg.format(self.__class__.__name__, 
-                          self.size, 
-                          self.index, 
+        return msg.format(self.__class__.__name__,
+                          self.size,
+                          self.index,
                           self.p)
 
 
@@ -1537,7 +1585,7 @@ class FillHole(object):
 class GrayScaleFillHole(object):
     """ Remove local minima not connected to the boundary of the image.
 
-         Holes are local minima in the grayscale topography that are not 
+         Holes are local minima in the grayscale topography that are not
              connected to boundaries of the image. Gray level values adjacent
              to a hole are extrapolated across the hole.
              This filter is used to smooth over local minima without affecting
@@ -1596,8 +1644,8 @@ class ReadFromPath(object):
 
 class Compose(object):
     """ Compose multiple transforms and apply transforms over input data.
-    
-    Args: 
+
+    Args:
         transforms(list): List of transforms to be composed.
     """
     def __init__(self, transforms: Iterable):
@@ -1683,9 +1731,9 @@ class RandomOrder(object):
             image, mask = t(image, mask)
         return image, mask
 
-    def __repr__(self): 
+    def __repr__(self):
         msg = '{} (transforms={})'
-        return msg.format(self.__class__.__name__, 
+        return msg.format(self.__class__.__name__,
                           self.transforms)
 
 

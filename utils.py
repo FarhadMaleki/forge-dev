@@ -4,6 +4,16 @@ import numpy as np
 import SimpleITK as sitk
 import torch
 
+def sitk_to_python_type(sitk_type):
+    if sitk_type in {sitk.sitkInt8, sitk.sitkUInt8, sitk.sitkInt16,
+                     sitk.sitkUInt16, sitk.sitkInt32, sitk.sitkUInt32,
+                     sitk.sitkLabelUInt8, sitk.sitkLabelUInt16,
+                     sitk.sitkLabelUInt32, sitk.sitkLabelUInt64}:
+        return int
+    if sitk_type in  {sitk.sitkFloat32, sitk.sitkFloat64}:
+        return float
+
+
 def read_image(path):
     # Reading DICOM from a directory
     if os.path.isdir(path):
