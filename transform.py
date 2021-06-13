@@ -2022,6 +2022,35 @@ class BinaryFillHole(object):
                           self.p)
 
 
+class BinaryErode(object):
+    def __init__(self, background: int = 0, foreground: int = 1,
+                 radius: Tuple[int, int, int] = (1, 1, 1)):
+        for r in radius:
+            assert r > 0
+        self.filter = sitk.BinaryErodeImageFilter()
+        self.filter.SetBackgroundValue(background)
+        self.filter.SetForegroundValue(foreground)
+        self.filter.SetKernelRadius(radius)
+
+    def __call__(self, image: sitk.Image = None, mask: sitk.Image = None):
+        assert mask is not None
+        return image, self.filter.Execute(mask)
+
+
+class BinaryDilate(object):
+    def __init__(self, background: int = 0, foreground: int = 1,
+                 radius: Tuple[int, int, int] = (1, 1, 1)):
+        for r in radius:
+            assert r > 0
+        self.filter = sitk.BinaryDilateImageFilter()
+        self.filter.SetBackgroundValue(background)
+        self.filter.SetForegroundValue(foreground)
+        self.filter.SetKernelRadius(radius)
+
+    def __call__(self, image: sitk.Image = None, mask: sitk.Image = None):
+        assert mask is not None
+        return image, self.filter.Execute(mask)
+
 class ReadFromPath(object):
     """Load image and its corresponding mask (if provided) from their addresses.
 
