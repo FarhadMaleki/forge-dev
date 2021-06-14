@@ -2,19 +2,29 @@
 """
 import random
 from numbers import Number
-from typing import List, Set, Dict, Tuple, Optional, Union, Iterable, Callable
+from abc import ABC, abstractmethod
+from typing import List, Tuple, Union, Iterable, Callable
 
 import numpy as np
 import SimpleITK as sitk
 
-from utils import get_stats
-from utils import read_image
-from utils import check_dimensions
-from utils import sitk_to_python_type
+from src.utils import get_stats
+from src.utils import read_image
+from src.utils import check_dimensions
 
 
 EPSILON = 1E-8
 DIMENSION = 3
+
+
+class Transformation(ABC):
+    @abstractmethod
+    def __call__(self, *args, **kwargs):
+        pass
+
+    @abstractmethod
+    def __repr__(self):
+        pass
 
 
 def apply_transform(transformation, image: sitk.Image,
@@ -87,7 +97,44 @@ def expand_parameters(param, dimension, name, convert_fn=None):
             raise ValueError(error_message)
     return param
 
-class Pad(object):
+
+class Identity(Transformation):
+    """ Apply identity transformation to an image and its mask (if provided).
+
+    This transformation does not change image or its mask and is just for
+        convinience.
+
+    Args:
+        copy: If True create and return a copy of the image and mask (if
+            provided); otherwise, the input image and mask objects will be
+            returned.
+
+    """
+    def __init__(self, copy: bool = False):
+        self.copy = copy
+
+    def __call__(self, image: sitk.Image, mask:sitk.Image = None):
+        """ Return an image and its mask (if provided) without any changes.
+
+        Args:
+            image: An image.
+            mask: A the mask for the image.
+
+        Returns:
+            sitk.Image: The foreground crop of the input image.
+            sitk.Mask: The mask for the foreground cropped image.
+        """
+        if self.copy:
+            image = sitk.Image(image)
+            mask = sitk.Image(mask)
+        return image, mask
+
+    def __repr__(self):
+        msg = ('{} (copy={})')
+        return msg.format(self.__class__.__name__, self.copy)
+
+
+class Pad(Transformation):
     """ Pad an image and a mask (if applicable).
 
     The available options for padding are constant padding,
@@ -177,7 +224,6 @@ class Pad(object):
                     stats_filter.Execute(bin_image, image)
                     constant = stats_filter.GetMedian(INSIDE_VALUE)
                     # Cast constant type to image type
-                    constant = sitk_to_python_type(image.GetPixelIDValue())(constant)
                 self.filter.SetConstant(constant)
             image = self.filter.Execute(image)
             if mask is not None:
@@ -186,8 +232,7 @@ class Pad(object):
                     filter.SetPadLowerBound(self.padding)
                 if self.pad_upper_bound is True:
                     filter.SetPadUpperBound(self.padding)
-                label = sitk_to_python_type(mask.GetPixelIDValue())(self.background_label)
-                filter.SetConstant(label)
+                filter.SetConstant(self.background_label)
                 mask = filter.Execute(mask)
         return image, mask
 
@@ -204,7 +249,7 @@ class Pad(object):
                           self.p)
 
 
-class ForegroundMask(object):
+class ForegroundMask(Transformation):
     """ Create a mask for the foreground part of an image.
 
     The foreground is detected through Otsu thresholding method.
@@ -262,7 +307,7 @@ class ForegroundMask(object):
         return msg.format(self.__class__.__name__, self.background, self.bins)
 
 
-class ForegroundCrop(object):
+class ForegroundCrop(Transformation):
     """ A transformation for Cropping foreground of an image.
 
     Args:
@@ -310,7 +355,7 @@ class ForegroundCrop(object):
         return msg.format(self.__class__.__name__, self.background, self.bins)
 
 #
-# class Rotate(object):
+# class Rotate(Transformation):
 #     """Rotate the given CT image by constant value x, y, z angles.
 #
 #     Args:
@@ -362,7 +407,7 @@ class ForegroundCrop(object):
 #                           self.interpolator,
 #                           self.p)
 
-class Affine(object):
+class Affine(Transformation):
     """ TODO: Update docstring
     Rotate the given CT image by constant value x, y, z angles.
 
@@ -519,7 +564,7 @@ class Affine(object):
                           self.p)
 
 
-class RandomRotation3D(object):
+class RandomRotation3D(Transformation):
     """ TODO: Update
     Rotate the given CT image by x, y, z angles.
 
@@ -586,7 +631,7 @@ class RandomRotation3D(object):
                           self.p)
 
 
-class Flip(object):
+class Flip(Transformation):
     """ Flips an image and it's mask (if provided) across user specified axes.
 
     Args:
@@ -633,7 +678,7 @@ class Flip(object):
                           self.p)
 
 
-class RandomFlipX(object):
+class RandomFlipX(Transformation):
     """ Flips an image and it's mask (if provided) across x-axis (width).
 
     Args:
@@ -678,7 +723,7 @@ class RandomFlipX(object):
         return msg.format(self.__class__.__name__, self.p)
 
 
-class RandomFlipY(object):
+class RandomFlipY(Transformation):
     """Flips an image and it's mask (if provided) across y-axis (height).
 
     Args:
@@ -724,7 +769,7 @@ class RandomFlipY(object):
         return msg.format(self.__class__.__name__, self.p)
 
 
-class RandomFlipZ(object):
+class RandomFlipZ(Transformation):
     """Flips an image and its mask (if provided) across z-axis (depth).
 
     Args:
@@ -769,7 +814,7 @@ class RandomFlipZ(object):
         return msg.format(self.__class__.__name__, self.p)
 
 
-class Crop(object):
+class Crop(Transformation):
     """Crop image based on given coordinates.
 
     Args:
@@ -828,7 +873,7 @@ class Crop(object):
                           self.p)
 
 
-class RandomCrop(object):
+class RandomCrop(Transformation):
     """Crop an image and its mask (if provided) randomly but with a fixed size.
 
         Args:
@@ -887,7 +932,7 @@ class RandomCrop(object):
                           self.p)
 
 
-class CenterCrop(object):
+class CenterCrop(Transformation):
     """Crop an image and its mask (if provided) from the center.
 
     Args:
@@ -945,7 +990,7 @@ class CenterCrop(object):
                           self.p)
 
 
-class RandomSegmentSafeCrop(object):
+class RandomSegmentSafeCrop(Transformation):
     """Crop an image and a mask randomly while keeping some reqions of interest.
 
     Regions of interest can be defined using a mask. Unlike many other
@@ -967,7 +1012,7 @@ class RandomSegmentSafeCrop(object):
         self.p = p
         assert isinstance(self.include, (tuple, list, np.array))
 
-    def __call__(self, image, mask=None):
+    def __call__(self, image, mask):
         """Apply the transformation to an image and its mask (if provided).
 
         Args:
@@ -982,8 +1027,8 @@ class RandomSegmentSafeCrop(object):
                 parameter is None, this would also be None.
 
         """
-        if mask is None:
-            raise ValueError('SegmentSafeCrop requires a mask.')
+        if mask is None or image is None:
+            raise ValueError('SegmentSafeCrop requires an image and a mask.')
         check_dimensions(image, mask)
         image_size = np.array(image.GetSize())
         msg = 'crop_size must be less than or equal to image size.'
@@ -1035,7 +1080,86 @@ class RandomSegmentSafeCrop(object):
                           self.p)
 
 
-class Resize(object):
+class SegmentCrop(Transformation):
+    """ Crop a region of interest from an image and its mask.
+
+    Regions of interest is defined using a mask. Unlike many other
+        transformation, this transformation requires a mask.
+
+    Args:
+        include: Sequence of unique ids for each segment of interest in the
+            image. Default is `[1]`.
+        if_missing: If 'raise' raises a ValueError when the region of interest
+            is empty; if 'ignore' the transformation does not have any effect on
+            the image and mask.
+        p: The transformation is applied with a probability of p.
+            The default value is ``1.0``.
+    """
+    def __init__(self, include: List = [1], if_missing='raise', p: float = 1.0):
+        assert p > 0
+        self.include = include
+        assert if_missing in {'raise', 'ignore'}
+        self.if_missing = if_missing
+        self.p = p
+        assert isinstance(self.include, (tuple, list, np.array))
+
+    def __call__(self, image, mask):
+        """Apply the transformation to an image and its mask (if provided).
+
+        Args:
+            image: A SimpleITK Image.
+            mask: A SimpleITK Image representing the contours for the image.
+                The default value is None. If mask is not None, its size should
+                be equal to the size of the image.
+
+        Returns:
+            sitk.Image: The transformed image.
+            sitk.Image: The mask for the transformed image. If the mask
+                parameter is None, this would also be None.
+
+        """
+        if mask is None or image is None:
+            raise ValueError('SegmentCrop requires an image and a mask.')
+        check_dimensions(image, mask)
+        if random.random() <= self.p:
+            # Create a binary mask
+            mask_arr = sitk.GetArrayFromImage(mask)
+            mask_array = np.zeros_like(mask_arr)
+            mask_array[np.isin(mask_arr, self.include)] = 1
+            binary_mask = sitk.GetImageFromArray(mask_array)
+            binary_mask.CopyInformation(mask)
+            #
+            if mask_array.sum() == 0:
+                if self.if_missing == 'raise':
+                    included_str = ', '.join([str(x) for x in self.include])
+                    msg = f'mask does not include any item from {included_str}'
+                    raise ValueError(msg)
+                else:
+                    return image, mask
+            # Determine the region of interest
+            lsif = sitk.LabelShapeStatisticsImageFilter()
+            lsif.Execute(binary_mask)
+            bbox = np.array(lsif.GetBoundingBox(1))
+            mid = len(bbox) // 2
+            seg_index = np.array(bbox[:mid])
+            seg_size = np.array(bbox[mid:])
+            # Crop the region of interest from the image and mask
+            tsfm = sitk.RegionOfInterestImageFilter()
+            tsfm.SetSize(seg_size.astype(int).tolist())
+            tsfm.SetIndex(seg_index.astype(int).tolist())
+            image, mask = apply_transform(tsfm, image, mask)
+        return image, mask
+
+    def __repr__(self):
+        included_str = ', '.join(self.include)
+        msg = '{} (include={}, if_missing={}, p={})'
+        return msg.format(self.__class__.__name__,
+                          self.include,
+                          self.if_missing,
+                          self.p)
+
+
+class Resize(Transformation):
     """Resize an image and its mask (if provided).
 
     Args:
@@ -1135,7 +1259,7 @@ class Resize(object):
                           self.p)
 
 
-class Expand(object):
+class Expand(Transformation):
     """Enlarge an image by an integer factor in each dimension.
 
     Given an image with size of (m, n, k), applying this transformation using an
@@ -1205,7 +1329,7 @@ class Expand(object):
                           self.p)
 
 
-class Shrink(object):
+class Shrink(Transformation):
     """Shrink an image by an integer factor in each dimension.
 
         Given an image with size of (m, n, k), applying this transformation
@@ -1257,7 +1381,7 @@ class Shrink(object):
                           self.p)
 
 
-class Invert(object):
+class Invert(Transformation):
     """Invert the intensity of an image based on a constant value.
 
     This transformation does not affect the mask.
@@ -1309,7 +1433,7 @@ class Invert(object):
                           self.p)
 
 
-class BionomialBlur(object):
+class BionomialBlur(Transformation):
     """Apply binomial blur filter to an image.
 
     Args:
@@ -1351,7 +1475,7 @@ class BionomialBlur(object):
                           self.p)
 
 
-class SaltPepperNoise(object):
+class SaltPepperNoise(Transformation):
     """Changes the voxel values with fixed value impulse noise.
 
     This transformation, which is often called salt and pepper noise does not
@@ -1423,7 +1547,7 @@ class SaltPepperNoise(object):
                           self.p)
 
 
-class AdditiveGaussianNoise(object):
+class AdditiveGaussianNoise(Transformation):
     """Apply additive Gaussian white noise to an image.
 
     This transformation does not affect masks.
@@ -1474,7 +1598,7 @@ class AdditiveGaussianNoise(object):
                           self.p)
 
 
-class MinMaxScaler(object):
+class MinMaxScaler(Transformation):
     """Linearly transform voxel values to a given range.
 
      This transformation does not affect masks. This transformation convert an
@@ -1532,7 +1656,7 @@ class MinMaxScaler(object):
                           self.p)
 
 
-class UnitNormalize(object):
+class UnitNormalize(Transformation):
     """Normalize an mage by transforming mean to ``0`` and variance to ``1``.
 
     This transformation does not affect masks.
@@ -1572,7 +1696,7 @@ class UnitNormalize(object):
                           self.p)
 
 
-class WindowLocationClip(object):
+class WindowLocationClip(Transformation):
     """Clip the voxel values to a specified range.
 
     Args:
@@ -1623,7 +1747,7 @@ class WindowLocationClip(object):
                           self.window,
                           self.p)
 
-class Clip(object):
+class Clip(Transformation):
     """Clip voxel values to a specified range.
 
     This transformation does not affect the masks.
@@ -1674,7 +1798,7 @@ class Clip(object):
                           self.p)
 
 
-class IsolateRange(object):
+class IsolateRange(Transformation):
     """Set voxel values outside a given range to a given constant.
 
     This object provide the option to manipulate the outside range in a mask
@@ -1775,7 +1899,7 @@ class IsolateRange(object):
                           self.p)
 
 
-class IntensityRangeTransfer(object):
+class IntensityRangeTransfer(Transformation):
     """Apply a linear transformations to the voxel values in a given range.
 
     Applies a linear transformation to the image voxel values of an image that
@@ -1846,7 +1970,7 @@ class IntensityRangeTransfer(object):
         )
 
 
-class AdaptiveHistogramEqualization(object):
+class AdaptiveHistogramEqualization(Transformation):
     """Histogram equalization modifies the contrast in an image.
 
         This transformation uses the AdaptiveHistogramEqualizationImageFilter
@@ -1915,7 +2039,7 @@ class AdaptiveHistogramEqualization(object):
         )
 
 
-class MaskImage(object):
+class MaskImage(Transformation):
     """Erase the region outside a mask.
 
     Args:
@@ -1975,7 +2099,7 @@ class MaskImage(object):
                           self.p)
 
 
-class BinaryFillHole(object):
+class BinaryFillHole(Transformation):
     """Fill holes that are not connected to the boundary of a binary image.
 
     Args:
@@ -2022,7 +2146,7 @@ class BinaryFillHole(object):
                           self.p)
 
 
-class BinaryErode(object):
+class BinaryErode(Transformation):
     def __init__(self, background: int = 0, foreground: int = 1,
                  radius: Tuple[int, int, int] = (1, 1, 1)):
         for r in radius:
@@ -2036,8 +2160,16 @@ class BinaryErode(object):
         assert mask is not None
         return image, self.filter.Execute(mask)
 
+    def __repr__(self):
+        msg = '{} (background={}, foreground={}, radius={})'
+        return msg.format(self.__class__.__name__,
+                          self.background,
+                          self.foreground,
+                          self.radius)
 
-class BinaryDilate(object):
+
+
+class BinaryDilate(Transformation):
     def __init__(self, background: int = 0, foreground: int = 1,
                  radius: Tuple[int, int, int] = (1, 1, 1)):
         for r in radius:
@@ -2051,11 +2183,37 @@ class BinaryDilate(object):
         assert mask is not None
         return image, self.filter.Execute(mask)
 
-class ReadFromPath(object):
+    def __repr__(self):
+        msg = '{} (background={}, foreground={}, radius={})'
+        return msg.format(self.__class__.__name__,
+                          self.background,
+                          self.foreground,
+                          self.radius)
+
+
+class MaskLabelRemap(Transformation):
+    def __init__(self, mapping: dict):
+        self.mapping = mapping
+
+    def __call__(self, image: sitk.Image = None, mask: sitk.Image = None):
+        check_dimensions(image, mask)
+        data = sitk.GetArrayFromImage(mask)
+        for old_value, new_value in self.mapping.items():
+            data[data == old_value] = new_value
+        msk = sitk.GetImageFromArray(data)
+        msk.CopyInformation(mask)
+        return image, msk
+
+    def __repr__(self):
+        msg = '{} (mapping={})'
+        return msg.format(self.__class__.__name__,
+                          self.mapping)
+
+
+class Reader(Transformation):
     """Load image and its corresponding mask (if provided) from their addresses.
 
     Each address could be a directory address or the DICOM file address.
-    Args:
 
     """
     def __init__(self):
@@ -2067,8 +2225,8 @@ class ReadFromPath(object):
         Args:
             image_path: The address of an image. This could be a the
                 address of a directory containing a dicom file or the address of
-                a single file containing an image. All file formats
-                supported Supported IO file formats include:
+                a single file containing an image. All file formats supported
+                IO file formats include:
                     * BMPImageIO (*.bmp, *.BMP)
                     * BioRadImageIO (*.PIC, *.pic)
                     * GiplImageIO (*.gipl *.gipl.gz)
@@ -2117,7 +2275,72 @@ class ReadFromPath(object):
         return msg.format(self.__class__.__name__)
 
 
-class Compose(object):
+class Writer(Transformation):
+    """ Wrtie image and its corresponding mask (if provided) from their
+        addresses.
+
+    Each address should be a file address. The supported IO file formats
+        include:
+        * BMPImageIO (*.bmp, *.BMP)
+        * BioRadImageIO (*.PIC, *.pic)
+        * GiplImageIO (*.gipl *.gipl.gz)
+        * JPEGImageIO (*.jpg, *.JPG, *.jpeg, *.JPEG)
+        * LSMImageIO (*.tif, *.TIF, *.tiff, *.TIFF, *.lsm, *.LSM)
+        * MINCImageIO (*.mnc, *.MNC)
+        * MRCImageIO (*.mrc, *.rec)
+        * MetaImageIO (*.mha, *.mhd)
+        * NiftiImageIO (*.nia, *.nii, *.nii.gz, *.hdr, *.img, *.img.gz)
+        * NrrdImageIO (*.nrrd, *.nhdr)
+        * PNGImageIO (*.png, *.PNG)
+        * TIFFImageIO (*.tif, *.TIF, *.tiff, *.TIFF)
+        * VTKImageIO (*.vtk)
+
+    """
+    index = 0
+    def __init__(self, image_prefix='image', image_postfix='',
+                 mask_prefix='mask', mask_postfix='', extension='nrrd'):
+        self.image_prefix = image_prefix
+        self.image_postfix = image_postfix
+        self.mask_prefix = mask_prefix
+        self.mask_postfix = mask_postfix
+        self.extension = extension
+        self.writer = sitk.ImageFileWriter()
+
+    @classmethod
+    def generate_path(cls):
+        Writer.index += 1
+        template= '{}{}{}.{}'
+        image_path = template.format(self.image_prefix, Writer.index,
+                                     self.image_postfix, self.extension)
+        mask_path = template.format(self.mask_prefix, Writer.index,
+                                     self.mask_postfix, self.extension)
+        return image_path, mask_path
+
+    def __call__(self, image: sitk.Image = None, mask: sitk.Image = None):
+        """ Write image and mask (if they are None) to files.
+
+        Args:
+            image: A SimpleITK Image.
+            mask: A SimpleITK Image representing the contours for the image.
+                The default value is None. If mask is not None, its size should
+                be equal to the size of the image.
+
+        """
+        check_dimensions(image, mask)
+        image_path, mask_path = Writer.generate_path()
+        if image is None:
+            self.writer.SetFileName(image_path)
+            self.writer.Execute(image)
+        if mask is None:
+            self.writer.SetFileName(mask_path)
+            self.writer.Execute(mask)
+
+    def __repr__(self):
+        msg = '{} ()'
+        return msg.format(self.__class__.__name__)
+
+
+class Compose(Transformation):
     """Compose multiple transformations to a single transformation.
 
     Args:
@@ -2151,7 +2374,7 @@ class Compose(object):
         return msg.format(self.__class__.__name__, tsfms)
 
 
-class RandomChoices(object):
+class RandomChoices(Transformation):
     """Randomly select k transformations and apply them.
 
     Args:
@@ -2205,7 +2428,7 @@ class RandomChoices(object):
                           self.keep_original_order)
 
 
-class OneOf(object):
+class OneOf(Transformation):
     """Apply one of the provided transformations.
 
     Args:
@@ -2243,7 +2466,7 @@ class OneOf(object):
                           self.transforms)
 
 
-class RandomOrder(object):
+class RandomOrder(Transformation):
     """Apply a list of transformations in a random order.
 
     Args:
@@ -2281,7 +2504,7 @@ class RandomOrder(object):
                           self.transforms)
 
 
-class Lambda(object):
+class Lambda(Transformation):
     """Apply a customized transformation.
 
     Args:
@@ -2326,3 +2549,149 @@ class Lambda(object):
 
     def __repr__(self):
         return self.__class__.__name__ + '()'
+
+
+class ToNumpy(Transformation):
+    """ Convert an image and its mask (if provided) to Numpy arrays.
+
+    Args:
+        out_image_dtype: The numpy datatype used to as the type of the numpy
+            array representing the image. If `None`, the output data type is
+            inferred from the image.
+        out_mask_dtype: The numpy datatype used to as the type of the numpy
+            array representing the mask. If `None`, the output data type is
+            inferred from the mask.
+    """
+    def __init__(self, out_image_dtype=None, out_mask_dtype=None):
+        self.out_image_dtype = out_image_dtype
+        self.out_mask_dtype = out_mask_dtype
+
+    def __call__(self, image, mask=None):
+        # Convert image and mask.
+        assert isinstance(image, sitk.SimpleITK.Image)
+        img, msk = None, None
+        if image is not None:
+            img = sitk.GetArrayFromImage(image)
+        if mask is not None:
+                msk = sitk.GetArrayFromImage(mask)
+        # Change image and mask dtypes.
+        if image is not None and self.out_image_dtype is not None:
+            img = img.astype(self.out_image_dtype)
+        if msk is not None and self.out_mask_dtype is not None:
+            msk = msk.astype(self.out_mask_dtype)
+        return img, msk
+
+    def __repr__(self):
+        msg = '{} (out_image_dtype={}, out_mask_dtype={})'
+        return msg.format(self.__class__.__name__,
+                          self.out_image_dtype,
+                          self.out_mask_dtype)
+
+
+class FromNumpy(Transformation):
+    """ Convert arrays to objects of type SimpleITK.Image.
+
+    Args:
+        out_image_dtype: The SimpleITK data type used to as the type of the
+            image. If `None`, the output data type is inferred from the image
+            array.
+        out_mask_dtype: The SimpleITK data type used to as the type of the
+            mask. If `None`, the output data type is inferred from the mask
+            array.
+    """
+    def __init__(self, out_image_dtype=None, out_mask_dtype=None):
+        self.out_image_dtype = out_image_dtype
+        self.out_mask_dtype = out_mask_dtype
+
+    def __call__(self, image, mask=None):
+        # Convert image and mask arrays to objects of type SimpleITK.Image.
+        assert isinstance(image, np.ndarray)
+        img, msk = None, None
+        if image is not None:
+            img = sitk.GetImageFromArray(image)
+        if mask is not None:
+                msk = sitk.GetImageFromArray(mask)
+        # Change image and mask dtypes.
+        if image is not None and self.out_image_dtype is not None:
+            img = sitk.Cast(img, self.out_image_dtype)
+        if mask is not None and self.out_mask_dtype is not None:
+            msk = sitk.Cast(msk, self.out_mask_dtype)
+        return img, msk
+
+    def __repr__(self):
+        msg = '{} (out_image_dtype={}, out_mask_dtype={})'
+        return msg.format(self.__class__.__name__,
+                          self.out_image_dtype,
+                          self.out_mask_dtype)
+
+
+class From2DTo3D(Transformation):
+    """ Convert a 2D SimpleITK image and mask to a 3D SimpleITK image and mask.
+
+    Convert 2D SimpleITK image (mask) to 3D SimpleITK image (mask) with user
+        defined depth. The 2D image will be copied, as a single layer of a 3D
+        image, to produce each layer of the 3D image.
+
+    Args:
+        depth (int): Number of times to replicate the 2D image.
+            The default value is ``1``.
+    """
+    def __init__(self, depth=1):
+        self.depth = depth
+        assert depth > 0, 'depth must be greater than to 0.'
+        self.filter = sitk.JoinSeriesImageFilter()
+
+    def __call__(self, image, mask=None):
+        assert isinstance(image, sitk.SimpleITK.Image)
+        msg = 'The {} should be 2D SimpleITK Image objects.'
+        if image is not None and image.GetDimension() != 2 :
+            raise ValueError(msg.format('image'))
+        else:
+            slices = [image for _ in range(self.depth)]
+            img = self.filter.Execute(slices)
+        if mask is not None and mask.GetDimension() != 2:
+            raise ValueError(msg.format('mask'))
+        else:
+            slices = [mask for _ in range(self.depth)]
+            msk = self.filter.Execute(slices)
+        return img, msk
+
+    def __repr__(self):
+        msg = '{} (depth={})'
+        return msg.format(self.__class__.__name__,
+                          self.depth)
+
+
+class Cast(Transformation):
+    """ Cast SimpleITK objects to new SimpleITK data types.
+
+    Args:
+        out_image_dtype: The SimpleITK data type used as the type of the
+            image. If `None`, the output data type is the same as the input
+            data type.
+        out_mask_dtype: The SimpleITK data type used as the type of the
+            mask. If `None`, the output data type is the same as the input
+            data type.
+    """
+    def __init__(self, out_image_dtype=None, out_mask_dtype=None):
+        self.out_image_dtype = out_image_dtype
+        self.out_mask_dtype = out_mask_dtype
+
+    def __call__(self, image, mask=None):
+        # Change image and mask dtypes.
+        img, msk = image, mask
+        if image is not None:
+            assert isinstance(image, sitk.Image)
+        if mask is not None:
+            assert isinstance(mask, sitk.Image)
+        if image is not None and self.out_image_dtype is not None:
+            img = sitk.Cast(image, self.out_image_dtype)
+        if mask is not None and self.out_mask_dtype is not None:
+            msk = sitk.Cast(mask, self.out_mask_dtype)
+        return img, msk
+
+    def __repr__(self):
+        msg = '{} (out_image_dtype={}, out_mask_dtype={})'
+        return msg.format(self.__class__.__name__,
+                          self.out_image_dtype,
+                          self.out_mask_dtype)
