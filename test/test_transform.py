@@ -1,13 +1,15 @@
+import os
+import tempfile
 import unittest
 import numpy as np
 
 import SimpleITK as sitk
 
-import transform as tr
+from src import transform as tr
+from src.utils import image_equal
 
 EPSILON = 1E-6
 class TestTransform(unittest.TestCase):
-
     @staticmethod
     def load_cube(example: str = 'small') -> sitk.Image:
         """
@@ -47,6 +49,24 @@ class TestTransform(unittest.TestCase):
         image = sitk.ReadImage(image_path)
         mask = sitk.ReadImage(mask_path)
         return image, mask
+    
+    def test_Identity(self):
+        image, mask = TestTransform.load_cube('hole')
+        # Identity transformation without copying
+        identity = tr.Identity(copy=False)
+        img, msk = identity(image, mask)
+        self.assertEqual(img, image)
+        self.assertEqual(msk, mask)
+        self.assertTrue(image_equal(image, img))
+        self.assertTrue(image_equal(mask, msk))
+        # Identity transformation with copying
+        identity = tr.Identity(copy=True)
+        img, msk = identity(image, mask)
+        self.assertNotEqual(img, image)
+        self.assertNotEqual(msk, mask)
+        self.assertTrue(image_equal(image, img))
+        self.assertTrue(image_equal(mask, msk))
+
 
     def test_Pad(self):
         image, mask = TestTransform.load_cube('hole')
@@ -70,6 +90,8 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(list(msk.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
         self.assertEqual(set(np.unique(sitk.GetArrayFromImage(msk))), {0, 1, 2, 3})
         self.assertEqual(set(np.unique(sitk.GetArrayFromImage(img))), {0, 50, 100, 1024, -1024})
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
         # Test representation
         representation = ('{} (padding={}, method={}, constant={}, background_label={}, '
                           'pad_lower_bound={}, pad_upper_bound={}, p={})')
@@ -85,6 +107,8 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(list(msk.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
         self.assertEqual(set(np.unique(sitk.GetArrayFromImage(msk))), {0, 1, 2, 3})
         self.assertEqual(set(np.unique(sitk.GetArrayFromImage(img))), {0, 50, 100, -1024})
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
         # Wrap padding
         PADING = [3, 2, 1]
         tsfm = tr.Pad(PADING, method='mirror',
@@ -95,6 +119,8 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(list(msk.GetSize()), [x + 2 * pad for x, pad in zip(image.GetSize(), PADING)])
         self.assertEqual(set(np.unique(sitk.GetArrayFromImage(msk))), {0, 1, 2, 3})
         self.assertEqual(set(np.unique(sitk.GetArrayFromImage(img))), {0, 50, 100, -1024})
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_ForegroundMask(self):
         image, mask = TestTransform.load_cube('small')
@@ -109,6 +135,8 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image)
         self.assertEqual((1- sitk.GetArrayFromImage(image)).sum(),
                          sitk.GetArrayFromImage(msk).sum())
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_ForegroundMask_raises_Error(self):
         image, mask = TestTransform.load_cube('small')
@@ -125,6 +153,7 @@ class TestTransform(unittest.TestCase):
         tsfm = tr.ForegroundCrop(background='<', bins=128)
         img, msk = tsfm(image)
         self.assertTrue(np.all(sitk.GetArrayFromImage(img) == 1))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_only_rotation_Affine(self):
         image, mask = TestTransform.load_cube('small')
@@ -135,6 +164,8 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(img.GetSize() == image.GetSize())
         self.assertTrue(msk.GetSize() == mask.GetSize())
         self.assertEqual(image.GetOrigin(), img.GetOrigin())
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
         tsfm = tr.Affine(angles=(10, 10, 20), translation=0, scale=1,
                          interpolator=sitk.sitkLinear, image_background=-1024,
@@ -143,6 +174,8 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(img.GetSize() == image.GetSize())
         self.assertTrue(msk.GetSize() == mask.GetSize())
         self.assertEqual(image.GetOrigin(), img.GetOrigin())
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
         tsfm = tr.Affine(angles=((-10, 10), (0, 10), (-50, 20)),
                          translation=0, scale=1, interpolator=sitk.sitkLinear,
@@ -152,6 +185,8 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(img.GetSize() == image.GetSize())
         self.assertTrue(msk.GetSize() == mask.GetSize())
         self.assertEqual(image.GetOrigin(), img.GetOrigin())
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_only_rotation_and_Scaling_Affine(self):
         image, mask = TestTransform.load_cube('small')
@@ -192,6 +227,8 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  image_only=False))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_Flip_X_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -208,6 +245,8 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, yflip=True,
                                                  image_only=False))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_Flip_Y_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -216,6 +255,7 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, yflip=True,
                                                  image_only=True))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_Flip_Z_image_and_mask(self):
         image, mask = TestTransform.load_cube('small')
@@ -224,6 +264,8 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, zflip=True,
                                                  image_only=False))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_Flip_Z_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -232,6 +274,7 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, zflip=True,
                                                  image_only=True))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_Flip_XY_image_and_mask(self):
         image, mask = TestTransform.load_cube('small')
@@ -240,6 +283,8 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  yflip=True, image_only=False))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_Flip_XY_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -248,6 +293,7 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  yflip=True, image_only=True))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_Flip_XYZ_image_and_mask(self):
         image, mask = TestTransform.load_cube('small')
@@ -257,6 +303,8 @@ class TestTransform(unittest.TestCase):
                                                  img, msk, xflip=True,
                                                  yflip=True, zflip=True,
                                                  image_only=False))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_Flip_XYZ_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -266,6 +314,7 @@ class TestTransform(unittest.TestCase):
                                                  img, msk, xflip=True,
                                                  yflip=True, zflip=True,
                                                  image_only=True))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_Flip_nothing_image_and_mask(self):
         image, mask = TestTransform.load_cube('small')
@@ -273,6 +322,8 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image=image, mask=mask)
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, image_only=False))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_Flip_nothing_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -280,6 +331,7 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image=image)
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, image_only=True))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_RandomFlipX_image_and_mask(self):
         image, mask = TestTransform.load_cube('small')
@@ -287,6 +339,8 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image=image, mask=mask)
         self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  xflip=True, image_only=False))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_RandomFlipX_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -295,6 +349,7 @@ class TestTransform(unittest.TestCase):
         self.assertTrue(TestTransform.checkFilip(image, mask,
                                                  img, msk, xflip=True,
                                                  image_only=True))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_RandomFlipY_image_and_mask(self):
         image, mask = TestTransform.load_cube('small')
@@ -302,6 +357,8 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image=image, mask=mask)
         self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  yflip=True, image_only=False))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_RandomFlipY_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -309,6 +366,7 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image=image)
         self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  yflip=True, image_only=True))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_RandomFlipZ_image_and_mask(self):
         image, mask = TestTransform.load_cube('small')
@@ -316,6 +374,8 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image=image, mask=mask)
         self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  zflip=True, image_only=False))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_RandomFlipZ_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -323,6 +383,7 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image=image)
         self.assertTrue(TestTransform.checkFilip(image, mask, img, msk,
                                                  zflip=True, image_only=True))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     @staticmethod
     def checkFilip(image, mask, img, msk,xflip: bool=False, yflip: bool=False,
@@ -362,6 +423,8 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image, mask)
         self.assertEqual(img.GetSize(), size)
         self.assertEqual(msk.GetSize(), size)
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
         # Crop only an image
         img, msk = tsfm(image)
         self.assertEqual(img.GetSize(), size)
@@ -377,12 +440,15 @@ class TestTransform(unittest.TestCase):
                                        sitk.GetArrayFromImage(img)))
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(mask),
                                        sitk.GetArrayFromImage(msk)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
         # Crop only an image
         img, msk = tsfm(image)
         self.assertEqual(img.GetSize(), size)
         self.assertIsNone(msk)
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(image),
                                        sitk.GetArrayFromImage(img)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_Crop_not_possible(self):
         image, mask = TestTransform.load_cube('small')
@@ -493,6 +559,8 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image, mask=mask)
         self.assertEqual(sitk.GetArrayFromImage(image).sum(),
                          sitk.GetArrayFromImage(img).sum())
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_SegmentSafeCrop_not_possible(self):
         image, mask = TestTransform.load_cube()
@@ -508,9 +576,9 @@ class TestTransform(unittest.TestCase):
         crop_size = (7, 7, 7)
         tsfm = tr.RandomSegmentSafeCrop(crop_size=crop_size, include=[1], p=1.0)
         try:
-            img, msk = tsfm(image)
+            img, msk = tsfm(image, None)
         except ValueError as e:
-            msg = 'SegmentSafeCrop requires a mask.'
+            msg = 'SegmentSafeCrop requires an image and a mask.'
             self.assertEqual(str(e), msg)
 
     def test_SegmentSafeCrop_works_on_empty_masks(self):
@@ -520,6 +588,59 @@ class TestTransform(unittest.TestCase):
         tsfm = tr.RandomSegmentSafeCrop(crop_size=crop_size, include=[2], p=1.0)
         img, msk = tsfm(image, mask=mask)
         self.assertTupleEqual(img.GetSize(), crop_size)
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
+
+    def test_SegmentCrop_with_mask(self):
+        image, mask = TestTransform.load_cube('hole')
+        expected_crop_size = (14, 14, 14)
+        #
+        tsfm = tr.SegmentCrop(include=[1, 2], p=1.0, if_missing='raise')
+        img, msk = tsfm(image, mask)
+        self.assertEqual(img.GetSize(), expected_crop_size)
+        self.assertEqual(msk.GetSize(), expected_crop_size)
+        r = slice(3, 17)
+        image_array = sitk.GetArrayFromImage(image)
+        img_array = sitk.GetArrayFromImage(img)
+        self.assertTrue(np.linalg.norm(image_array[r, r, r] - img_array) <
+                        EPSILON)
+        mask_array = sitk.GetArrayFromImage(mask)
+        msk_array = sitk.GetArrayFromImage(msk)
+        self.assertTrue(np.linalg.norm(mask_array[r, r, r] - msk_array) <
+                        EPSILON)
+
+    def test_SegmentCrop_without_mask_raise_Error(self):
+        image, mask = TestTransform.load_cube('hole')
+        #
+        tsfm = tr.SegmentCrop(include=[1, 2], p=1.0, if_missing='raise')
+        try:
+            img, msk = tsfm(image, None)
+        except ValueError as e:
+            msg = 'SegmentCrop requires an image and a mask.'
+            self.assertEqual(str(e), msg)
+
+    def test_SegmentCrop_with_empty_region_raises_Error(self):
+        image, mask = TestTransform.load_cube('hole')
+        #
+        INCLUDE = [3]
+        tsfm = tr.SegmentCrop(include=INCLUDE, p=1.0, if_missing='raise')
+        try:
+            img, msk = tsfm(image, mask)
+        except ValueError as e:
+            included_str = ', '.join([str(x) for x in INCLUDE])
+            msg = f'mask does not include any item from {included_str}'
+            self.assertEqual(str(e), msg)
+
+    def test_SegmentCrop_with_empty_region_no_action(self):
+        image, mask = TestTransform.load_cube('hole')
+        #
+        INCLUDE = [10]
+        tsfm = tr.SegmentCrop(include=INCLUDE, p=1.0, if_missing='ignore')
+        img, msk = tsfm(image, mask)
+        self.assertEqual(image, img)
+        self.assertEqual(mask, msk)
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_Resize(self):
         image, mask = TestTransform.load_cube('small')
@@ -532,6 +653,8 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image, mask=mask)
         self.assertTrue(np.array_equal(output_size, img.GetSize()))
         self.assertTrue(np.array_equal(output_size, msk.GetSize()))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_Resize_image_only(self):
         image, mask = TestTransform.load_cube('small')
@@ -543,6 +666,7 @@ class TestTransform(unittest.TestCase):
                          p=1.0)
         img, msk = tsfm(image)
         self.assertTrue(np.array_equal(output_size, img.GetSize()))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_Resize_invalid_size_parameters_raise_error(self):
         image, mask = TestTransform.load_cube('small')
@@ -579,6 +703,9 @@ class TestTransform(unittest.TestCase):
         image_size = np.array(image.GetSize())
         self.assertTrue(np.array_equal(img.GetSize(),
                                        image_size * expansion_factors))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
+
 
     def test_Expand_raise_Error(self):
         image, mask = TestTransform.load_cube('small')
@@ -621,12 +748,16 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(img.GetSize(), image.GetSize())
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(image),
                                        1 - sitk.GetArrayFromImage(img)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
         # Inferring maximum when it is not provided
         tsfm = tr.Invert(p=1.0)
         img, msk = tsfm(image, mask=mask)
         self.assertEqual(img.GetSize(), image.GetSize())
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(image),
                                        1 - sitk.GetArrayFromImage(img)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
         # Using a maximum value larger than the intensity values
         MAXIMUM = 255
         tsfm = tr.Invert(maximum=MAXIMUM, p=1.0)
@@ -634,6 +765,8 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(img.GetSize(), image.GetSize())
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(image),
                                        MAXIMUM - sitk.GetArrayFromImage(img)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_BionomialBlur(self):
         image, mask = TestTransform.load_cube('small')
@@ -647,6 +780,8 @@ class TestTransform(unittest.TestCase):
         # The  input and output image for BionomialBlur are different
         self.assertFalse(np.all(sitk.GetArrayFromImage(image) ==
                                 sitk.GetArrayFromImage(img)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_SaltPepperNoise(self):
         image, mask = TestTransform.load_cube('small')
@@ -667,6 +802,8 @@ class TestTransform(unittest.TestCase):
         self.assertFalse(np.all(image_array == img_array))
         self.assertEqual(img_array.max(), max_value)
         self.assertEqual(img_array.min(), min_value)
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
         # No noise
         tsfm = tr.SaltPepperNoise(noise_prob=0, random_seed=1, p=1.0)
         img, msk = tsfm(image, mask=mask)
@@ -677,6 +814,8 @@ class TestTransform(unittest.TestCase):
         # The  input and output image for SaltPepperNoise are different
         self.assertTrue(np.all(sitk.GetArrayFromImage(image) ==
                                sitk.GetArrayFromImage(img)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_SaltPepperNoise_raisesError(self):
         image, mask = TestTransform.load_cube('small')
@@ -684,10 +823,11 @@ class TestTransform(unittest.TestCase):
         # min_value must be less than max_value
         try:
             min_value, max_value = 3, -1
-            tsfm = tr.SaltPepperNoise(noise_prob=0.2,
-                                      noise_range=(min_value, max_value),
-                                      random_seed=1, p=1.0)
-            raise ValueError
+            tr.SaltPepperNoise(noise_prob=0.2,
+                               noise_range=(min_value, max_value),
+                               random_seed=1,
+                               p=1.0)
+            assert False
         except ValueError as e:
             msg = ('noise_range must be a tuple of size 2 representing'
                    'the lower and upper bounds of noise values')
@@ -701,6 +841,8 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(mask.GetSize(), msk.GetSize())
         self.assertFalse(np.all(sitk.GetArrayFromImage(image) ==
                                 sitk.GetArrayFromImage(img)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_MinMaxScaler(self):
         image, mask = TestTransform.load_cube('small')
@@ -712,6 +854,7 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(sitk.GetArrayFromImage(img).min(), MIN_VALUE)
         self.assertTrue(np.all(sitk.GetArrayFromImage(mask) ==
                                sitk.GetArrayFromImage(msk)))
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_MinMaxScaler_image_only(self):
         image, _ = TestTransform.load_cube('small')
@@ -746,6 +889,7 @@ class TestTransform(unittest.TestCase):
         self.assertAlmostEqual(sitk.GetArrayFromImage(img).var(), 1, 2)
         self.assertTrue(np.all(sitk.GetArrayFromImage(mask) ==
                                sitk.GetArrayFromImage(msk)))
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_UnitNormalize_image_only(self):
         image, _ = TestTransform.load_cube('small')
@@ -772,6 +916,8 @@ class TestTransform(unittest.TestCase):
         # This transformation does not affect the mask
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(msk),
                                        sitk.GetArrayFromImage(mask)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_WindowLocationClip_image_only(self):
         image, _ = TestTransform.load_cube('stripe')
@@ -789,6 +935,7 @@ class TestTransform(unittest.TestCase):
                          {3, 7})
         self.assertEqual(img.GetSize(), image.GetSize())
         self.assertIsNone(msk)
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_Clip(self):
         image, mask = TestTransform.load_cube('stripe')
@@ -806,6 +953,8 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(img.GetSize(), image.GetSize())
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(msk),
                                        sitk.GetArrayFromImage(mask)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_Clip_image_only(self):
         image, _ = TestTransform.load_cube('stripe')
@@ -822,6 +971,7 @@ class TestTransform(unittest.TestCase):
                          {3, 7})
         self.assertEqual(img.GetSize(), image.GetSize())
         self.assertIsNone(msk)
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_ThresholdClip(self):
         image, mask = TestTransform.load_cube('hole')
@@ -839,6 +989,8 @@ class TestTransform(unittest.TestCase):
                                        sitk.GetArrayFromImage(msk)))
         img_array = sitk.GetArrayFromImage(img)
         self.assertEqual(set(np.unique(img_array)), {0, 50})
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_ThresholdClip_update_mask(self):
         image, mask = TestTransform.load_cube('hole')
@@ -857,6 +1009,8 @@ class TestTransform(unittest.TestCase):
                          {0, 1})
         img_array = sitk.GetArrayFromImage(img)
         self.assertEqual(set(np.unique(img_array)), {0, 50})
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_ThresholdClip_image_only(self):
         image, _ = TestTransform.load_cube('hole')
@@ -872,6 +1026,7 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(img.GetSize(), image.GetSize())
         img_array = sitk.GetArrayFromImage(img)
         self.assertEqual(set(np.unique(img_array)), {0, 50})
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_ThresholdClip_raise_error(self):
         image, _ = TestTransform.load_cube('hole')
@@ -902,6 +1057,8 @@ class TestTransform(unittest.TestCase):
         self.assertAlmostEqual(img_array.min(), LOWER)
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(msk),
                                        sitk.GetArrayFromImage(mask)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_IntensityRangeTransfer_with_casting(self):
         image, _ = TestTransform.load_cube('hole')
@@ -930,6 +1087,7 @@ class TestTransform(unittest.TestCase):
         self.assertAlmostEqual(img_array.max(), UPPER)
         self.assertAlmostEqual(img_array.min(), LOWER)
         self.assertIsNone(msk)
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_AdaptiveHistogramEqualization(self):
         image, mask = TestTransform.load_cube('medium')
@@ -939,6 +1097,8 @@ class TestTransform(unittest.TestCase):
         self.assertEqual(img.GetSize(), image.GetSize())
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(mask),
                                        sitk.GetArrayFromImage(msk)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_AdaptiveHistogramEqualization_image_only(self):
         image, _ = TestTransform.load_cube('medium')
@@ -947,6 +1107,7 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image)
         self.assertEqual(img.GetSize(), image.GetSize())
         self.assertIsNone(msk)
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
 
     def test_MaskImage(self):
         image, mask = TestTransform.load_cube('hole')
@@ -965,6 +1126,8 @@ class TestTransform(unittest.TestCase):
         msk_array = sitk.GetArrayFromImage(msk)
         self.assertEqual(np.asscalar(np.unique(img_array[msk_array == LABEL])),
                          BACKGROUND)
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_MaskImage_raise_error(self):
         image, mask = TestTransform.load_cube('hole')
@@ -994,6 +1157,8 @@ class TestTransform(unittest.TestCase):
                          {0, 1, 2})
         self.assertTrue(np.array_equal(sitk.GetArrayFromImage(img),
                                        sitk.GetArrayFromImage(image)))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
 
     def test_FillHole_raise_error(self):
         image, mask = TestTransform.load_cube('hole')
@@ -1004,9 +1169,109 @@ class TestTransform(unittest.TestCase):
             msg = 'mask cannot be None.'
             self.assertEqual(str(e), msg)
 
-    def test_ReadFromPath(self):
-        #TODO:
-        pass
+    def test_Reader(self):
+        image, mask = TestTransform.load_cube('small')
+        image_path = 'test/data/image1.nrrd'
+        mask_path = 'test/data/mask1.nrrd'
+        reader = tr.Reader()
+        img, msk = reader(image_path=image_path, mask_path=mask_path)
+        self.assertTrue(image_equal(image, img))
+        self.assertTrue(image_equal(mask, msk))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
+
+    def test_Writer(self):
+        image, mask = TestTransform.load_cube('small')
+        writer = tr.Writer(dir_path='test/data', image_prefix='TempImage',
+                           image_postfix='___', mask_prefix='TempMask',
+                           mask_postfix='___', extension='nrrd')
+        temp_image_path, temp_mask_path = writer(image, mask)
+        reader = tr.Reader()
+        img, msk = reader(image_path=temp_image_path, mask_path=temp_mask_path)
+        self.assertTrue(image_equal(image, img))
+        self.assertTrue(image_equal(mask, msk))
+        self.assertEqual(img.GetPixelIDValue(), image.GetPixelIDValue())
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
+        os.remove(temp_image_path)
+        os.remove(temp_mask_path)
+
+    def test_MaskLabelRemap(self):
+        image, mask = TestTransform.load_cube('hole')
+        remap = tr.MaskLabelRemap({100: 0, 50: 0, 2: 1})
+        img, msk = remap(image, mask)
+        self.assertEqual(img, image)
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
+        self.assertEqual(set(np.unique(sitk.GetArrayFromImage(msk))), {0, 1})
+        # Remap Mask with blank image
+        remap = tr.MaskLabelRemap({100: 0, 50: 0, 2: 1})
+        img, msk = remap(mask=mask)
+        self.assertIsNone(img)
+        self.assertEqual(msk.GetPixelIDValue(), mask.GetPixelIDValue())
+        self.assertEqual(set(np.unique(sitk.GetArrayFromImage(msk))), {0, 1})
+
+    def test_BinaryErode(self):
+        image, mask = TestTransform.load_cube('hole')
+        FOREGROUND = 1
+        BACKGROUND = 0
+        eroder = tr.BinaryErode(background=BACKGROUND,
+                                foreground=FOREGROUND,
+                                radius=(1, 1, 1))
+        img, msk = eroder(image, mask)
+        msk_segment = sitk.GetArrayFromImage(msk)
+        mask_segment = sitk.GetArrayFromImage(mask)
+        msk_segment[msk_segment != FOREGROUND] = 0
+        mask_segment[mask_segment != FOREGROUND] = 0
+        self.assertGreater(mask_segment.sum(), msk_segment.sum())
+
+    def test_BinaryDilate(self):
+        image, mask = TestTransform.load_cube('hole')
+        FOREGROUND = 1
+        BACKGROUND = 0
+        dilate = tr.BinaryDilate(background=BACKGROUND,
+                                 foreground=FOREGROUND,
+                                 radius=(1, 1, 1))
+        img, msk = dilate(image, mask)
+        msk_segment = sitk.GetArrayFromImage(msk)
+        mask_segment = sitk.GetArrayFromImage(mask)
+        msk_segment[msk_segment != FOREGROUND] = 0
+        mask_segment[mask_segment != FOREGROUND] = 0
+        self.assertGreater(msk_segment.sum(), mask_segment.sum())
+
+    def test_Resample(self):
+        image, mask = TestTransform.load_cube('hole')
+        output_spacing = (0.5, 2, 1)
+        params = {'interpolator': sitk.sitkLinear,
+                  'output_spacing': output_spacing,
+                  'default_image_voxel_value': 100,
+                  'default_mask_voxel_value': 0,
+                  'output_image_voxel_type': sitk.sitkInt16,
+                  'output_mask_voxel_type': sitk.sitkUInt8,
+                  'output_direction': None,
+                  'output_origin': None,
+                  'use_nearest_neighbor_extrapolator': False}
+        resampler = tr.Resample(**params)
+        img, msk = resampler(image, mask)
+        self.assertEqual(img.GetSize(), msk.GetSize())
+        self.assertSequenceEqual(img.GetSize(),
+                                 [x / s for x, s in zip(image.GetSize(),
+                                                        output_spacing)])
+
+    def test_Isotropic(self):
+        image, mask = TestTransform.load_cube('hole')
+        output_spacing = 0.5
+        params = {'interpolator': sitk.sitkLinear,
+                  'output_spacing': output_spacing,
+                  'default_image_voxel_value': -1024,
+                  'default_mask_voxel_value': 0,
+                  'output_image_voxel_type': sitk.sitkInt16,
+                  'output_mask_voxel_type': sitk.sitkUInt8,
+                  'output_origin': None,
+                  'use_nearest_neighbor_extrapolator': True}
+        resampler = tr.Isotropic(**params)
+        img, msk = resampler(image, mask)
+        self.assertEqual(img.GetSize(), msk.GetSize())
+        self.assertSequenceEqual(img.GetSize(),
+                                 [x / output_spacing for x in image.GetSize()])
 
     def test_Compose(self):
         ids = [i for i in range(5)]
@@ -1064,6 +1329,7 @@ class TestTransform(unittest.TestCase):
         img, msk = tsfm(image, mask=mask)
         self.assertEqual(img, [0])
         self.assertEqual(msk, [0])
+        
 
 
 class MockTransform(object):

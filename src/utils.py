@@ -2,7 +2,6 @@ import os
 import random
 import numpy as np
 import SimpleITK as sitk
-# import torch
 
 
 def image_equal(image1: sitk.Image, image2: sitk.Image, type_check=True,
@@ -31,8 +30,20 @@ def image_equal(image1: sitk.Image, image2: sitk.Image, type_check=True,
     return True
 
 
-def read_image(path):
-    # Reading DICOM from a directory
+def read_image(path: str):
+    """ Read an image.
+
+    Args:
+        path: The path to the image file or the folder containing a DICOM image.
+
+    Returns:
+        sitk.Image: A SimpleITK Image.
+
+    Raises:
+        ValueError: if there exist more than one image series or if there is no
+            DICOM file in the provided ``path``.
+
+    """
     if os.path.isdir(path):
         reader = sitk.ImageSeriesReader()
         series_IDs = reader.GetGDCMSeriesIDs(path)
@@ -56,7 +67,8 @@ def get_stats(image):
     """Computes minimum, maximum, sum, mean, variance, and standard deviation of
         an image.
     Args:
-        image:
+        image: A sitk.Image object.
+
     Returns:
         returns statistical values of type dictionary include keys 'min',
             'max', 'mean', 'std', and 'var'.
@@ -72,7 +84,16 @@ def get_stats(image):
     return image_info
 
 def check_dimensions(image, mask):
-    """ Check if the size of the image and mask are equal."""
+    """ Check if the size of the image and mask are equal.
+
+    Args:
+        image: A sitk.Image.
+        mask: A sitk.Image.
+
+    Raises:
+        ValueError: If image and mask are not None and their dimension are
+            not the same.
+    """
     if (mask is not None) and (image is not None):
         if image.GetSize() != mask.GetSize():
             msg = 'image and mask size should be equal, but ({}) != ({}).'
@@ -83,20 +104,40 @@ def check_dimensions(image, mask):
 
 
 class Label(object):
+    """ Label a binary image.
+
+    Each distinct connected component (segment) is assigned a unique label. The
+        segment labels start from 1 and are consecutive. The order of
+        label assignment is based on the the raster position of the
+        segments in the binary image.
+
+    Args:
+        fully_connected:
+        input_foreground_value:
+        output_background_value:
+        dtype: The data type for the label map. Options include:
+            * sitk.sitkUInt8
+            * sitk.sitkUInt16
+            * sitk.sitkUInt32
+            * sitk.sitkUInt64
+
     """
-    """
-    def __init__(self, fully_connected=False, input_foreground_value=1,
-                 output_background_value=0, dtype=sitk.sitkUInt8):
+    def __init__(self, fully_connected: bool = False,
+                 input_foreground_value: int = 1,
+                 output_background_value: int = 0,
+                 dtype=sitk.sitkUInt8):
         self.input_foreground_value = input_foreground_value
         self.output_background_value = output_background_value
         self.fully_connected = fully_connected
         self.dtype = dtype
 
     def __call__(self, binary_image):
-        mask = sitk.BinaryImageToLabelMap(binary_image,
+        mask = sitk.BinaryImageToLabelMap(
+            binary_image,
             fullyConnected=self.fully_connected,
             inputForegroundValue=self.input_foreground_value,
             outputBackgroundValue=self.output_background_value)
+
         mask = sitk.Cast(mask, pixelID=self.dtype)
         return mask
 
@@ -108,5 +149,3 @@ class Label(object):
                           self.input_foreground_value,
                           self.output_background_value,
                           self.dtype)
-
-

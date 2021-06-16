@@ -1,6 +1,7 @@
 """
 """
 import random
+import os.path
 from numbers import Number
 from abc import ABC, abstractmethod
 from typing import List, Tuple, Union, Iterable, Callable
@@ -1170,6 +1171,7 @@ class Resize(Transformation):
             options for interpolations are:
                 * ``sitk.sitkBSpline``
                 * ``sitk.sitkGaussian``
+                * ``sitk.sitkNearestNeighbor``
                 * ``sitk.sitkHammingWindowedSinc``
                 * ``sitk.sitkBlackmanWindowedSinc``
                 * ``sitk.sitkCosineWindowedSinc``
@@ -1276,6 +1278,7 @@ class Expand(Transformation):
             options for interpolations are:
                 * ``sitk.sitkBSpline``
                 * ``sitk.sitkGaussian``
+                * ``sitk.sitkNearestNeighbor``
                 * ``sitk.sitkHammingWindowedSinc``
                 * ``sitk.sitkBlackmanWindowedSinc``
                 * ``sitk.sitkCosineWindowedSinc``
@@ -1571,7 +1574,7 @@ class AdditiveGaussianNoise(Transformation):
         self.filter.SetStandardDeviation(self.std)
 
     def __call__(self, image, mask=None, *args, **kwargs):
-        """Apply the transformation to an image and its mask (if provided).
+        """ Apply the transformation to an image and its mask (if provided).
 
         Args:
             image: A SimpleITK Image.
@@ -1746,6 +1749,7 @@ class WindowLocationClip(Transformation):
                           self.location,
                           self.window,
                           self.p)
+
 
 class Clip(Transformation):
     """Clip voxel values to a specified range.
@@ -2168,7 +2172,6 @@ class BinaryErode(Transformation):
                           self.radius)
 
 
-
 class BinaryDilate(Transformation):
     def __init__(self, background: int = 0, foreground: int = 1,
                  radius: Tuple[int, int, int] = (1, 1, 1)):
@@ -2208,6 +2211,250 @@ class MaskLabelRemap(Transformation):
         msg = '{} (mapping={})'
         return msg.format(self.__class__.__name__,
                           self.mapping)
+
+
+class Isotropic(Transformation):
+    """ Make an image isotropic, i.e. equally spaced in all directions.
+
+    Args:
+        interpolator= The interpolator used for resampling. The default is
+            ``sitk.sitkLinear``. Other options for interpolations are:
+                * ``sitk.sitkBSpline``
+                * ``sitk.sitkGaussian``
+                * ``sitk.sitkNearestNeighbor``
+                * ``sitk.sitkHammingWindowedSinc``
+                * ``sitk.sitkBlackmanWindowedSinc``
+                * ``sitk.sitkCosineWindowedSinc``
+                * ``sitk.sitkWelchWindowedSinc``
+                * ``sitk.sitkLanczosWindowedSinc``
+            The interpolation for mask is alway
+        output_spacing: A single number representing the spacing in all
+            directions. The default is ``1``.
+        default_image_voxel_value: The default value for new image voxels.
+            The default is ``0``.
+        default_mask_voxel_value: The default value for new voxel mask voxels.
+            The default is ``0``.
+        output_image_voxel_type: The voxel type of the output image. The
+            default is ``None``, meaning that the voxel type is the same as the
+            image.
+        output_mask_voxel_type: The voxel type of the output mask. The
+            default is ``None``, meaning that the voxel type is the same as
+            the mask.
+        output_direction: The direction of image and mask (both assumed to be
+            the same). The default is ``None``, meaning that the direction is
+           is infered from the image and mask.
+        output_origin: The origin of image and mask (both assumed to be
+            the same). The default is ``None``, meaning that the origin is
+           is infered from the image and mask.
+        use_nearest_neighbor_extrapolator: Use nearest neighbot for
+            extrapolations. The default is ``True``.
+        dimension: The dimension of the image and mask. The default is ``3``.
+
+    """
+    def __init__(self,
+                 interpolator=sitk.sitkLinear,
+                 output_spacing: float = 1,
+                 default_image_voxel_value=0,
+                 default_mask_voxel_value=0,
+                 output_image_voxel_type=None,
+                 output_mask_voxel_type=None,
+                 output_direction=None,
+                 output_origin=None,
+                 use_nearest_neighbor_extrapolator: bool = True,
+                 dimension: int = 3):
+        output_spacing = (output_spacing, ) * dimension
+        self.resampler = Resample(
+            interpolator=interpolator,
+            output_spacing=output_spacing,
+            default_image_voxel_value=default_image_voxel_value,
+            default_mask_voxel_value=default_mask_voxel_value,
+            output_image_voxel_type=output_image_voxel_type,
+            output_mask_voxel_type=output_mask_voxel_type,
+            output_direction=output_direction,
+            output_origin=output_origin,
+            use_nearest_neighbor_extrapolator=use_nearest_neighbor_extrapolator)
+        self.filter = self.resampler.filter
+
+    def __call__(self, image, mask=None):
+        """ Apply the transformation to an image and its mask (if provided).
+
+        Args:
+            image: A SimpleITK Image.
+            mask: A SimpleITK Image representing the contours for the image.
+                The default value is None. If mask is not None, its size should
+                be equal to the size of the image.
+
+        Returns:
+            sitk.Image: The transformed image.
+            sitk.Image: The mask for the transformed image. If the mask
+                parameter is None, this would also be None.
+
+        """
+        return self.resampler(image, mask)
+
+    def __repr__(self):
+        temp = repr(self.resampler)
+        msg = '{}{})'
+        return msg.format(self.__class__.__name__,
+                          temp[len('Resample'):])
+
+
+class Resample(Transformation):
+    """ Make an image isotropic, i.e. equally spaced in all directions.
+
+    Args:
+        interpolator= The interpolator used for resampling. The default is
+            ``sitk.sitkLinear``. Other options for interpolations are:
+                * ``sitk.sitkBSpline``
+                * ``sitk.sitkGaussian``
+                * ``sitk.sitkNearestNeighbor``
+                * ``sitk.sitkHammingWindowedSinc``
+                * ``sitk.sitkBlackmanWindowedSinc``
+                * ``sitk.sitkCosineWindowedSinc``
+                * ``sitk.sitkWelchWindowedSinc``
+                * ``sitk.sitkLanczosWindowedSinc``
+            The interpolation for mask is alway
+        output_spacing: A tuple representing the spacing in each directions.
+            The order of directions is x (height), y (width), and z (depth).
+            The default is ``(1, 1, 1)``.
+        default_image_voxel_value: The default value for new image voxels.
+            The default is ``0``.
+        default_mask_voxel_value: The default value for new voxel mask voxels.
+            The default is ``0``.
+        output_image_voxel_type: The voxel type of the output image. The
+            default is ``None``, meaning that the voxel type is the same as the
+            image.
+        output_mask_voxel_type: The voxel type of the output mask. The
+            default is ``None``, meaning that the voxel type is the same as
+            the mask.
+        output_direction: The direction of image and mask (both assumed to be
+            the same). The default is ``None``, meaning that the direction is
+           is infered from the image and mask.
+        output_origin: The origin of image and mask (both assumed to be
+            the same). The default is ``None``, meaning that the origin is
+           is infered from the image and mask.
+        use_nearest_neighbor_extrapolator: Use nearest neighbot for
+            extrapolations. The default is ``True``.
+
+        """
+    def __init__(self,
+                 interpolator=sitk.sitkLinear,
+                 output_spacing: tuple = (1, 1, 1),
+                 default_image_voxel_value=0,
+                 default_mask_voxel_value=0,
+                 output_image_voxel_type=None,
+                 output_mask_voxel_type=None,
+                 output_direction=None,
+                 output_origin=None,
+                 use_nearest_neighbor_extrapolator:bool = True):
+        self.interpolator = interpolator
+        self.output_spacing = output_spacing
+        self.default_image_voxel_value = default_image_voxel_value
+        self.default_mask_voxel_value = default_mask_voxel_value
+        self.output_image_voxel_type = output_image_voxel_type
+        self.output_mask_voxel_type = output_mask_voxel_type
+        self.output_direction = output_direction
+        self.output_origin = output_origin
+        self.nne = use_nearest_neighbor_extrapolator
+        # Create the fileter
+        self.filter = sitk.ResampleImageFilter()
+        self.filter.SetTransform(sitk.Transform())
+        self.filter.SetUseNearestNeighborExtrapolator(self.nne)
+
+
+    def __call__(self, image, mask=None):
+        """ Apply the transformation to an image and its mask (if provided).
+
+        Args:
+            image: A SimpleITK Image.
+            mask: A SimpleITK Image representing the contours for the image.
+                The default value is None. If mask is not None, its size should
+                be equal to the size of the image.
+
+        Returns:
+            sitk.Image: The transformed image.
+            sitk.Image: The mask for the transformed image. If the mask
+                parameter is None, this would also be None.
+
+        """
+        check_dimensions(image, mask)
+        if image is not None:
+            image = self.__resample(image, self.interpolator,
+                                    self.default_image_voxel_value,
+                                    self.output_image_voxel_type)
+        if mask is not None:
+            mask = self.__resample(mask, sitk.sitkNearestNeighbor,
+                                   self.default_mask_voxel_value,
+                                   self.output_mask_voxel_type)
+        return image, mask
+
+    def __resample(self, image, interpolator, default_voxel_value,
+                   output_voxel_type):
+        """ A helper function for resampling one image.
+        Args:
+            interpolator: The interpolator used for resampling. The default is
+                ``sitk.sitkLinear``. Other options for interpolations are:
+                    * ``sitk.sitkBSpline``
+                    * ``sitk.sitkGaussian``
+                    * ``sitk.sitkNearestNeighbor``
+                    * ``sitk.sitkHammingWindowedSinc``
+                    * ``sitk.sitkBlackmanWindowedSinc``
+                    * ``sitk.sitkCosineWindowedSinc``
+                    * ``sitk.sitkWelchWindowedSinc``
+                    * ``sitk.sitkLanczosWindowedSinc``
+                The interpolator for mask must be ``sitk.sitkNearestNeighbor``;
+                    otherwise, the interpolation interoduces new labels in
+                    the returned mask.
+            default_voxel_value: The default value for new image (or mask)
+                voxels.
+            output_voxel_type: The voxel type of the output image (or mask).
+
+        Returns:
+            sitk.Image: The resampled image (or mask).
+        """
+        # Set spacing
+        if self.output_spacing is None:
+            out_spacing = image.GetSpacing()
+        else:
+            out_spacing = self.output_spacing
+        self.filter.SetOutputSpacing(out_spacing)
+        # Set size
+        original_size = np.array(image.GetSize())
+        original_spacing = np.array(image.GetSpacing())
+        out_spacing = np.array(out_spacing)
+        out_size = original_size * original_spacing / out_spacing
+        out_size = [int(np.round(x)) for x in out_size]
+        self.filter.SetSize(out_size)
+        # Set direction
+        if self.output_direction is None:
+            self.filter.SetOutputDirection(image.GetDirection())
+        else:
+            self.filter.SetOutputDirection(self.output_direction)
+        # Set origin
+        if self.output_origin is None:
+            self.filter.SetOutputOrigin(image.GetOrigin())
+        else:
+            self.filter.SetOutputOrigin(self.output_origin)
+        # Set default voxel value
+        self.filter.SetDefaultPixelValue(default_voxel_value)
+        self.filter.SetOutputPixelType(output_voxel_type)
+        self.filter.SetInterpolator(interpolator)
+        return self.filter.Execute(image)
+
+    def __repr__(self):
+        msg = ('{} (interpolator={}, output_spacing={}, '
+               'default_voxel_value={}, output_voxel_type={}, '
+               'output_direction={}, output_voxel_Type={}, '
+               'output_direction={}, use_nearest_neighbor_extrapolator={}')
+        return msg.format(self.__class__.__name__,
+                          self.interpolator,
+                          self.output_spacing,
+                          self.default_voxel_value,
+                          self.output_voxel_type,
+                          self.output_direction,
+                          self.output_voxel_Type,
+                          self.output_direction,
+                          self.nne)
 
 
 class Reader(Transformation):
@@ -2296,8 +2543,8 @@ class Writer(Transformation):
         * VTKImageIO (*.vtk)
 
     """
-    index = 0
-    def __init__(self, image_prefix='image', image_postfix='',
+
+    def __init__(self, dir_path='.', image_prefix='image', image_postfix='',
                  mask_prefix='mask', mask_postfix='', extension='nrrd'):
         self.image_prefix = image_prefix
         self.image_postfix = image_postfix
@@ -2305,16 +2552,18 @@ class Writer(Transformation):
         self.mask_postfix = mask_postfix
         self.extension = extension
         self.writer = sitk.ImageFileWriter()
+        self.index = 0
+        self.dir_path = dir_path
 
-    @classmethod
-    def generate_path(cls):
-        Writer.index += 1
-        template= '{}{}{}.{}'
-        image_path = template.format(self.image_prefix, Writer.index,
+    def generate_path(self):
+        self.index += 1
+        template= '{}{:0>5}{}.{}'
+        image_path = template.format(self.image_prefix, self.index,
                                      self.image_postfix, self.extension)
-        mask_path = template.format(self.mask_prefix, Writer.index,
+        mask_path = template.format(self.mask_prefix, self.index,
                                      self.mask_postfix, self.extension)
-        return image_path, mask_path
+        return (os.path.join(self.dir_path, image_path),
+                os.path.join(self.dir_path, mask_path))
 
     def __call__(self, image: sitk.Image = None, mask: sitk.Image = None):
         """ Write image and mask (if they are None) to files.
@@ -2325,15 +2574,24 @@ class Writer(Transformation):
                 The default value is None. If mask is not None, its size should
                 be equal to the size of the image.
 
+        Returns:
+            str: The written image file path.
+            str: The wirtten mask file path.
         """
         check_dimensions(image, mask)
-        image_path, mask_path = Writer.generate_path()
-        if image is None:
+        image_path, mask_path = self.generate_path()
+
+        if image is not None:
             self.writer.SetFileName(image_path)
             self.writer.Execute(image)
-        if mask is None:
+        else:
+            image_path = None
+        if mask is not None:
             self.writer.SetFileName(mask_path)
             self.writer.Execute(mask)
+        else:
+            mask_path = None
+        return image_path, mask_path
 
     def __repr__(self):
         msg = '{} ()'
