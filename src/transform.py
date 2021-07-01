@@ -522,85 +522,6 @@ class Affine(Transformation):
                     image_type=mask_type)
         return image, mask
 
-    @staticmethod
-    def __make_parameters(theta_x, theta_y, theta_z, tx, ty, tz, scale):
-        """Convert the Euler angle parametrization to quaternion.
-
-        Args:
-            theta_x: A number representing the rotation angle x.
-            theta_y: A number representing the rotation angle y.
-            theta_z: A number representing the rotation angle z.
-            tx: A number representing the translation in the directio nof x
-                axis.
-            ty: A number representing the translation in the directio nof y
-                axis.
-            tz: A number representing the translation in the directio nof z
-                axis.
-            scale: A value used for scaling.
-
-        Return:
-            A list of lists representing the parameter space sampling.
-        """
-        return [list(Affine.eul2quat(parameter_values[0], parameter_values[1],
-                                     parameter_values[2])) +
-                [np.asscalar(p) for p in parameter_values[3:]] for
-                 parameter_values in np.nditer(np.meshgrid(theta_x, theta_y,
-                                                           theta_z, tx, ty, tz,
-                                                           scale))][0]
-
-    @staticmethod
-    def eul2quat(ax, ay, az, atol=1e-8):
-        """Convert Euler angle representation to quaternion for a rotation.
-
-        Args:
-            ax: X rotation angle in radians.
-            ay: Y rotation angle in radians.
-            az: Z rotation angle in radians.
-            atol: The tolerance value used to stablize quaternion computation.
-        Return:
-            A Numpy array with three entries representing the quaternion.
-        """
-        # Create rotation matrix using Euler angles and compute quaternion.
-        cx = np.cos(ax)
-        cy = np.cos(ay)
-        cz = np.cos(az)
-        sx = np.sin(ax)
-        sy = np.sin(ay)
-        sz = np.sin(az)
-        r = np.zeros((3, 3))
-        r[0, 0] = cz * cy
-        r[0, 1] = cz * sy * sx - sz * cx
-        r[0, 2] = cz * sy * cx + sz * sx
-
-        r[1, 0] = sz * cy
-        r[1, 1] = sz * sy * sx + cz * cx
-        r[1, 2] = sz * sy * cx - cz * sx
-
-        r[2, 0] = -sy
-        r[2, 1] = cy * sx
-        r[2, 2] = cy * cx
-
-        # Compute quaternion:
-        qs = 0.5 * np.sqrt(r[0, 0] + r[1, 1] + r[2, 2] + 1)
-        qv = np.zeros(3)
-        # When the scalar component of the quaternion is  almost zero,
-        # a numerically stable approach is used
-        if np.isclose(qs, 0.0, atol):
-            i = np.argmax([r[0, 0], r[1, 1], r[2, 2]])
-            j = (i + 1) % 3
-            k = (j + 1) % 3
-            w = np.sqrt(r[i, i] - r[j, j] - r[k, k] + 1)
-            qv[i] = 0.5 * w
-            qv[j] = (r[i, j] + r[j, i]) / (2 * w)
-            qv[k] = (r[i, k] + r[k, i]) / (2 * w)
-        else:
-            denom = 4 * qs
-            qv[0] = (r[2, 1] - r[1, 2]) / denom
-            qv[1] = (r[0, 2] - r[2, 0]) / denom
-            qv[2] = (r[1, 0] - r[0, 1]) / denom
-        return qv
-
-
     def __repr__(self):
         msg = ('{} (angles={}, translation={}, scale={}, interpolator={},'
                'image_background={}, mask_background={}, reference={}')
@@ -616,19 +537,17 @@ class Affine(Transformation):
 
         
 class RandomRotation3D(Transformation):
-    """TODO: Update
-    Rotate the given CT image by x, y, z angles.
+    """Rotate a given image and its mask (if provided) in the 3D space.
 
     Args:
-        angles (sequence): The upper bound rotation angles in degrees.
-            The real degree with be sampled betweeen [-angle, angle] rotation
-            over x, y, z in order. default is `(10, 10, 10)`.
+        angles (sequence): The rotation angles in degrees.
+            The rotation is over x, y, z in order. default is ``(10, 10, 10)``.
         interpolator(sitk interpolator): interpolator to apply on
-            rotated ct images.
+            rotated ct images. The default is ``sitk.sitkBSpline``
         p (float): The transformation is applied with a probability of p.
-            The default value is `1.0`.
+            The default value is ``1.0``.
     """
-    def __init__(self, angles=(10, 10, 10), interpolator=sitk.sitkLinear,
+    def __init__(self, angles=(10, 10, 10), interpolator=sitk.sitkBSpline,
                  p: float = 1.0):
         self.p = p
         if angles == (0, 0, 0):
