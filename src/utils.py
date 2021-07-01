@@ -1,7 +1,72 @@
 import os
 import random
+import itertools
 import numpy as np
 import SimpleITK as sitk
+
+def refrence_free_3D_resample(image, transformation, interpolator,
+                              default_value, image_type=None, spacing=None,
+                              direction=None):
+    """
+
+    Args:
+        image:
+        transformation:
+        interpolator:
+        default_value:
+        image_type:
+        size:
+        spacing:
+        direction:
+
+    Returns:
+
+    """
+    extreme_indecies = list(itertools.product(*zip([0, 0, 0], image.GetSize())))
+    extreme_points = [image.TransformIndexToPhysicalPoint(idx)
+                      for idx in extreme_indecies]
+    inv_transform = transformation.GetInverse()
+    # Calculate the coordinates of the inversed extream points
+    extreme_points_transformed = [inv_transform.TransformPoint(point)
+                                  for point in extreme_points]
+    min_values = np.array((extreme_points_transformed)).min(axis=0)
+    max_values = np.array((extreme_points_transformed)).max(axis=0)
+
+    if spacing is None:
+        spacing = image.GetSpacing()
+    if direction is None:
+        direction = image.GetDirection()
+    # Minimal x,y, and coordinates are the new origin.
+    origin = min_values.tolist()
+    # Compute grid size based on the physical size and spacing.
+    size = [int((max_val - min_val) / s)
+            for min_val, max_val, s in zip(min_values, max_values, spacing)]
+    return sitk.Resample(image, size, transformation, interpolator,
+                         outputOrigin=origin,
+                         outputSpacing=spacing,
+                         outputDirection=direction,
+                         defaultPixelValue=default_value,
+                         outputPixelType=image_type)
+
+def referenced_3D_resample(image, transformation, interpolator, default_value,
+                        image_type, reference=None):
+    """
+
+    Args:
+        image:
+        transformation:
+        interpolator:
+        default_value:
+        image_type:
+        reference:
+
+    Returns:
+
+    """
+    if reference is None:
+        reference = image
+    return sitk.Resample(image, reference, transformation, interpolator,
+                         default_value, image_type)
 
 
 def image_equal(image1: sitk.Image, image2: sitk.Image, type_check=True,

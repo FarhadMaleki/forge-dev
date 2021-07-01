@@ -7,13 +7,15 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Union, Iterable, Callable
 
 import numpy as np
+import scipy
 import SimpleITK as sitk
 
 from src.utils import get_stats
 from src.utils import read_image
 from src.utils import check_dimensions
-
-
+from scipy.spatial.transform import Rotation
+from src.utils import referenced_3D_resample
+from src.utils import refrence_free_3D_resample
 EPSILON = 1E-8
 DIMENSION = 3
 
@@ -29,22 +31,22 @@ class Transformation(ABC):
 
 
 def apply_transform(transformation, image: sitk.Image,
-                    mask: sitk.Image = None, *args, **kwargs):
-    """ Apply a SimpleITK transformation on an image and its mask (if provided).
+                    mask: sitk.Image = None):
+    """Apply a SimpleITK transformation on an image and its mask (if provided).
 
     Args:
         transformation: A SimpleITK transformation.
         image: A simpleITK Image object that is the image to be transformed.
         mask: A simpleITK Image object that is the contour(s) for the image.
     """
-    image = transformation.Execute(image, *args, **kwargs)
+    image = transformation.Execute(image)
     if mask is not None:
-        mask = transformation.Execute(mask, *args, **kwargs)
+        mask = transformation.Execute(mask)
     return image, mask
 
 
 def expand_parameters(param, dimension, name, convert_fn=None):
-    """ A helper function for making boundary lists.
+    """A helper function for making boundary lists.
 
     The boundary list must be a list of tuples of size 2. For example,
         in a 3D context this should be:
@@ -100,7 +102,7 @@ def expand_parameters(param, dimension, name, convert_fn=None):
 
 
 class Identity(Transformation):
-    """ Apply identity transformation to an image and its mask (if provided).
+    """Apply identity transformation to an image and its mask (if provided).
 
     This transformation does not change image or its mask and is just for
         convinience.
@@ -115,7 +117,7 @@ class Identity(Transformation):
         self.copy = copy
 
     def __call__(self, image: sitk.Image, mask:sitk.Image = None):
-        """ Return an image and its mask (if provided) without any changes.
+        """Return an image and its mask (if provided) without any changes.
 
         Args:
             image: An image.
@@ -136,7 +138,7 @@ class Identity(Transformation):
 
 
 class Pad(Transformation):
-    """ Pad an image and a mask (if applicable).
+    """Pad an image and a mask (if applicable).
 
     The available options for padding are constant padding,
         mirror padding, and wrap padding.
@@ -251,7 +253,7 @@ class Pad(Transformation):
 
 
 class ForegroundMask(Transformation):
-    """ Create a mask for the foreground part of an image.
+    """Create a mask for the foreground part of an image.
 
     The foreground is detected through Otsu thresholding method.
 
@@ -274,7 +276,7 @@ class ForegroundMask(Transformation):
         self.filter.SetMaskOutput(False)
 
     def __call__(self, image: sitk.Image) -> sitk.Image:
-        """ Create a foreground mask.
+        """Create a foreground mask.
 
         Args:
             image: An SimpleITK image.
@@ -309,7 +311,7 @@ class ForegroundMask(Transformation):
 
 
 class ForegroundCrop(Transformation):
-    """ A transformation for Cropping foreground of an image.
+    """A transformation for Cropping foreground of an image.
 
     Args:
         background: The relationship of background and the Otsu threshold.
@@ -323,7 +325,7 @@ class ForegroundCrop(Transformation):
         self.bins = bins
 
     def __call__(self, image: sitk.Image, mask: sitk.Image = None):
-        """ Crop foreground of an image and its mask (if provided).
+        """Crop foreground of an image and its mask (if provided).
 
         The foreground is selected using the Otsu method.
 
@@ -355,86 +357,94 @@ class ForegroundCrop(Transformation):
         msg = '{} (background={}, bins={})'
         return msg.format(self.__class__.__name__, self.background, self.bins)
 
-#
-# class Rotate(Transformation):
-#     """Rotate the given CT image by constant value x, y, z angles.
-#
-#     Args:
-#         angles (sequence): The rotation angles in degrees. default is `(10, 10, 10)`.
-#         interpolator(sitk interpolator): interpolator to apply on
-#             rotated ct images.
-#         p (float): The transformation is applied with a
-#             probability of p. The default value is `0.5`.
-#     """
-#
-#     def __init__(self, angles=(10, 10, 10), interpolator=sitk.sitkLinear, p=0.5):
-#         self.p = p
-#         if isinstance(angles, int):
-#             angles = [0, 0, angles]
-#         if isinstance(angles, (tuple, list)):
-#             if len(angles) == 2 or len(angles) > 3:
-#                 raise ValueError(f'Expected one integer or a sequence of '
-#                                  f'length 3 as a angle or each dimension. Got {len(angles)}.')
-#         self.x_angle, self.y_angle, self.z_angle = angles
-#         self.tz = sitk.VersorTransform((0, 0, 1), np.deg2rad(self.z_angle))
-#         self.ty = sitk.VersorTransform((0, 1, 0), np.deg2rad(self.y_angle))
-#         self.tx = sitk.VersorTransform((1, 0, 0), np.deg2rad(self.x_angle))
-#
-#         self.interpolator = interpolator
-#
-#     def __call__(self, image, mask=None):
-#         check_dimensions(image, mask)
-#         if random.random() <= self.p:
-#             center = image.TransformContinuousIndexToPhysicalPoint(
-#                                                         np.array(image.GetSize()) / 2.0)
-#
-#             self.tz.SetCenter(center)
-#             self.ty.SetCenter(center)
-#             self.tx.SetCenter(center)
-#
-#             composite = sitk.CompositeTransform(self.tz)
-#             composite.AddTransform(self.ty)
-#             composite.AddTransform(self.tx)
-#
-#             image = sitk.Resample(image, image, composite, self.interpolator)
-#             if mask is not None:
-#                 mask = sitk.Resample(mask, mask, composite, sitk.sitkNearestNeighbor)
-#         return image, mask
-#
-#     def __repr__(self):
-#         msg = '{} (angles={}, interpolator={}, p={})'
-#         return msg.format(self.__class__.__name__,
-#                           (self.x_angle, self.y_angle, self.z_angle),
-#                           self.interpolator,
-#                           self.p)
 
-class Affine(Transformation):
-    """ TODO: Update docstring
-    Rotate the given CT image by constant value x, y, z angles.
+class Rotate(Transformation):
+    """Rotation transformation applied to an image and its mask (if provided).
 
     Args:
-        angles: The rotation angles in degrees. The default is ``(10, 10, 10)``.
-        interpolator(sitk interpolator): interpolator to apply on
-            rotated ct images.
-        p (float): The transformation is applied with a probability of p.
-            The default value is ``1.0``.
+        angles: The rotation angles in degrees. This should be a tuple of
+            lengtyh 3.
+        interpolator(sitk interpolator): The interpolator used by the
+            transformation. The defult is ``sitk.sitkBSpline``.
+        image_background: The value used as the default for image voxels.
+        mask_background: The value used as the default for mask voxels.
+        reference: The refrence grid used for resampling during the
+            transformation. The default is None, meaning that the imge (mask)
+            itself is used for resampling.
     """
     DIMENSION = 3
-
-    def __init__(self, angles=(0, 0, 20), translation=0, scale=1,
-                 interpolator=sitk.sitkLinear, image_background=0,
-                 mask_background=0, reference=None, p=1.0):
-        assert p > 0
-        self.p = p
-        self.reference = reference
-        self.angles = expand_parameters(angles, DIMENSION, 'angles',
-                                        convert_fn=np.radians)
-        self.translation = expand_parameters(translation, DIMENSION,
-                                             'translation', convert_fn=None)
-        self.scale = scale
+    def __init__(self, angles: Tuple[int, int, int],
+                 interpolator=sitk.sitkBSpline, image_background=0,
+                 mask_background=0, reference=None):
+        self.angles = eangles
         self.interpolator = interpolator
         self.image_background = image_background
         self.mask_background = mask_background
+        self.reference = reference
+        self.rotation = Affine(self.angles, translation=(0, 0, 0),
+                               scale=[1] * DIMENSION,
+                               interpolator=self.interpolator,
+                               image_background=self.image_background,
+                               mask_background=self.mask_background,
+                               reference=self.reference)
+
+    def __call__(self, image, mask=None):
+        return self.rotation(image, mask)
+
+    def __repr__(self):
+        msg = ('{} (angles={}, interpolator={}, image_background={}, '
+               'mask_background={}, reference={}')
+
+        return msg.format(self.__class__.__name__,
+                          str(self.angles),
+                          self.interpolator,
+                          self.image_background,
+                          self.mask_background,
+                          self.reference)
+
+
+class Affine(Transformation):
+    """The affine transformation applied to an image and its mask (if provided).
+    
+    Args:
+        angles: The rotation angles in degrees. This should be a tuple of 
+            lengtyh 3.
+        translation: The translation components. This should be a tuple of 
+            lengtyh 3.
+        scale: A scale factor.
+        interpolator(sitk interpolator): The interpolator used by the 
+            transformation. The defult is ``sitk.sitkBSpline``.
+        image_background: The value used as the default for image voxels.
+        mask_background: The value used as the default for mask voxels.
+        reference: The refrence grid used for resampling during the
+            transformation. The default is None, meaning that the imge (mask)
+            itself is used for resampling.
+    """
+    DIMENSION = 3
+
+    def __init__(self, angles: Tuple[int, int, int],
+                 translation: tuple = (0, 0, 0), scales=1,
+                 interpolator=sitk.sitkBSpline, image_background=0,
+                 mask_background=0, image_type=sitk.sitkInt16,
+                 mask_type=sitk.sitkUInt8, reference=None,
+                 spacing=None, direction=None, reshape=True):
+        if len(angles) != DIMENSION:
+            raise ValueError(f'angles must be of length {DIMENSION}')
+        if len(translation) != DIMENSION:
+            raise ValueError(f'translation must be of length {DIMENSION}')
+        self.reference = reference
+        self.angles = [-a for a in np.radians(angles)]
+        self.translation = [-t for t in translation]
+        self.image_type = image_type
+        self.mask_type = mask_type
+
+        self.scale = [1./x for x in scales]
+        self.interpolator = interpolator
+        self.image_background = image_background
+        self.mask_background = mask_background
+        self.spacing = spacing
+        self.direction = direction
+        self.reshape = reshape
 
     def __call__(self, image, mask=None):
         """Apply the transformation to an image and its mask (if provided).
@@ -451,72 +461,153 @@ class Affine(Transformation):
                 parameter is None, this would also be None.
 
         """
-        if random.random() <= self.p:
-            aug_transform = sitk.Similarity3DTransform()
-            reference = image if self.reference is None else self.reference
-            transform = sitk.AffineTransform(Affine.DIMENSION)
-            transform.SetMatrix(image.GetDirection())
-            transform.SetTranslation(np.array(image.GetOrigin()) - np.array(reference.GetOrigin()))
-            # Modify the transformation to align the centers of the original and
-            # reference image instead of their origins.
-            centering = sitk.TranslationTransform(Affine.DIMENSION)
-            image_center = np.array(image.TransformContinuousIndexToPhysicalPoint(np.array(image.GetSize()) / 2.0))
-            reference_center = reference.TransformContinuousIndexToPhysicalPoint(np.array(reference.GetSize()) / 2.0)
-            reference_center = np.array(reference_center)
-            centering.SetOffset(np.array(transform.GetInverse().TransformPoint(image_center) - reference_center))
-            centered_transform = sitk.CompositeTransform(transform)
-            centered_transform.AddTransform(centering)
+        X, Y, Z = 0, 1, 2
+        affine = sitk.AffineTransform(Affine.DIMENSION)
+        center = np.array(image.GetSize()) / 2
+        center = image.TransformContinuousIndexToPhysicalPoint(center.tolist())
+        affine.SetCenter(center)
+        affine.Rotate(Y, Z, angle=self.angles[X])
+        affine.Rotate(X, Z, angle=self.angles[Y])
+        affine.Rotate(X, Y, angle=self.angles[Z])
+        affine.Scale(self.scale)
+        affine.Translate(self.translation)
+        # Set image_type
+        if self.image_type is None:
+            image_type = image.PixelIDValueType()
+        else:
+            image_type = self.image_type
+        # Set mask_type
+        if self.mask_type is None:
+            mask_type = mask.PixelIDValueType()
+        else:
+            mask_type = self.mask_type
+        # Set spacing
+        if self.spacing is None:
+            spacing = image.GetSpacing()
+        else:
+            spacing = self.spacing
+        # Set direction
+        if self.direction is None:
+            direction = image.GetDirection()
+        else:
+            direction = self.direction
+        if self.reshape is True:
+            image = refrence_free_3D_resample(
+                image,
+                affine,
+                interpolator=self.interpolator,
+                default_value=self.image_background,
+                image_type=image_type,
+                spacing=spacing,
+                direction=direction)
 
-            # Set the augmenting transform's center so that rotation is around the image center.
-            aug_transform.SetCenter(reference_center)
-            angles = [np.random.uniform(lb, ub) for (lb, ub) in self.angles]
-            translation = [np.random.uniform(*pair) for pair in self.translation]
-            parameters = Affine.make_parameters(*angles, *translation, self.scale)
-            aug_transform.SetParameters(parameters)
-            # Augmentation is done in the reference image space,
-            # so we first map the points from the reference image space
-            # back onto itself T_aug (e.g. rotate the reference image)
-            # and then we map to the original image space T0.
-            composite = sitk.CompositeTransform([centered_transform, aug_transform])
-            aug_image = sitk.Resample(image, reference, composite,
-                                      self.interpolator, self.image_background)
-            aug_mask = None
             if mask is not None:
-                aug_mask = sitk.Resample(mask, reference, composite,
-                                         sitk.sitkNearestNeighbor, self.mask_background)
-            return aug_image, aug_mask
+                mask = refrence_free_3D_resample(
+                    mask,
+                    affine,
+                    interpolator=sitk.sitkNearestNeighbor,
+                    default_value=self.mask_background,
+                    image_type=mask_type,
+                    spacing=spacing,
+                    direction=direction)
+        else:
+            image = referenced_3D_resample(
+                image, affine, self.interpolator,
+                default_value=self.image_background,
+                image_type=image_type)
+            if mask is not None:
+                mask = referenced_3D_resample(
+                    mask, affine, sitk.sitkNearestNeighbor,
+                    default_value=self.mask_background,
+                    image_type=mask_type)
+        return image, mask
+
+
+
+        # affine.Scale(self.angles)
+        # aug_transform = sitk.Similarity3DTransform()
+        # reference = image if self.reference is None else self.reference
+        # transform = sitk.AffineTransform(Affine.DIMENSION)
+        # transform.SetMatrix(image.GetDirection())
+        # transform.SetTranslation(np.array(image.GetOrigin()) -
+        #                          np.array(reference.GetOrigin()))
+        # # Modify the transformation to align the centers of the original and
+        # # reference image instead of their origins.
+        # centering = sitk.TranslationTransform(Affine.DIMENSION)
+        # center = np.array(image.GetSize()) / 2.0
+        # center = image.TransformContinuousIndexToPhysicalPoint(
+        #     center.tolist())
+        # ref_center = np.array(np.array(reference.GetSize()) / 2.0)
+        # ref_center = reference.TransformContinuousIndexToPhysicalPoint(
+        #     ref_center.tolist())
+        # centering.SetOffset(
+        #     (np.array(
+        #         transform.GetInverse().TransformPoint(center)) -
+        #         ref_center).tolist())
+        # centered_transform = sitk.CompositeTransform(transform)
+        # centered_transform.AddTransform(centering)
+        #
+        # # Set the augmenting transform's center so that
+        # #   the rotation is around the image center.
+        # aug_transform.SetCenter(ref_center)
+        # angles = [np.random.uniform(lb, ub) for (lb, ub) in self.angles]
+        # translation = [np.random.uniform(*pair) for pair in self.translation]
+        # parameters = Affine.__make_parameters(*angles, *translation, self.scale)
+        # aug_transform.SetParameters(parameters)
+        # # Since Augmentation is done in the reference image space,
+        # # so we first map the points from the reference image space
+        # # back onto itself T_aug (e.g. rotate the reference image)
+        # # and then we map to the original image space T0.
+        # composite = sitk.CompositeTransform([centered_transform,
+        #                                      aug_transform])
+        # aug_image = sitk.Resample(image, reference, composite,
+        #                           self.interpolator, self.image_background)
+        # aug_mask = None
+        # if mask is not None:
+        #     aug_mask = sitk.Resample(mask, reference, composite,
+        #                              sitk.sitkNearestNeighbor,
+        #                              self.mask_background)
+        # return aug_image, aug_mask
 
     @staticmethod
-    def make_parameters(thetaX, thetaY, thetaZ, tx, ty, tz, scale):
-        """
-        Create a list representing a regular sampling of the 3D similarity transformation parameter space. As the
-        SimpleITK rotation parameterization uses the vector portion of a versor we don't have an
-        intuitive way of specifying rotations. We therefor use the ZYX Euler angle parametrization and convert to
-        versor.
+    def __make_parameters(theta_x, theta_y, theta_z, tx, ty, tz, scale):
+        """Convert the Euler angle parametrization to quaternion.
+
         Args:
-            thetaX, thetaY, thetaZ: numpy ndarrays with the Euler angle values to use.
-            tx, ty, tz: numpy ndarrays with the translation values to use.
-            scale: numpy array with the scale values to use.
+            theta_x: A number representing the rotation angle x.
+            theta_y: A number representing the rotation angle y.
+            theta_z: A number representing the rotation angle z.
+            tx: A number representing the translation in the directio nof x
+                axis.
+            ty: A number representing the translation in the directio nof y
+                axis.
+            tz: A number representing the translation in the directio nof z
+                axis.
+            scale: A value used for scaling.
+
         Return:
-            List of lists representing the parameter space sampling (vx,vy,vz,tx,ty,tz,s).
+            A list of lists representing the parameter space sampling.
         """
-        return [list(Affine.eul2quat(parameter_values[0], parameter_values[1], parameter_values[2])) +
-                [np.asscalar(p) for p in parameter_values[3:]] for parameter_values in
-                np.nditer(np.meshgrid(thetaX, thetaY, thetaZ, tx, ty, tz, scale))][0]
+        return [list(Affine.eul2quat(parameter_values[0], parameter_values[1],
+                                     parameter_values[2])) +
+                [np.asscalar(p) for p in parameter_values[3:]] for
+                 parameter_values in np.nditer(np.meshgrid(theta_x, theta_y,
+                                                           theta_z, tx, ty, tz,
+                                                           scale))][0]
 
     @staticmethod
     def eul2quat(ax, ay, az, atol=1e-8):
-        """
-        Translate between Euler angle (ZYX) order and quaternion representation of a rotation.
+        """Convert Euler angle representation to quaternion for a rotation.
+
         Args:
             ax: X rotation angle in radians.
             ay: Y rotation angle in radians.
             az: Z rotation angle in radians.
-            atol: tolerance used for stable quaternion computation (qs==0 within this tolerance).
+            atol: The tolerance value used to stablize quaternion computation.
         Return:
-            Numpy array with three entries representing the vectorial component of the quaternion.
+            A Numpy array with three entries representing the quaternion.
         """
-        # Create rotation matrix using ZYX Euler angles and then compute quaternion using entries.
+        # Create rotation matrix using Euler angles and compute quaternion.
         cx = np.cos(ax)
         cy = np.cos(ay)
         cz = np.cos(az)
@@ -539,8 +630,8 @@ class Affine(Transformation):
         # Compute quaternion:
         qs = 0.5 * np.sqrt(r[0, 0] + r[1, 1] + r[2, 2] + 1)
         qv = np.zeros(3)
-        # If the scalar component of the quaternion is close to zero, we
-        # compute the vector part using a numerically stable approach
+        # When the scalar component of the quaternion is  almost zero,
+        # a numerically stable approach is used
         if np.isclose(qs, 0.0, atol):
             i = np.argmax([r[0, 0], r[1, 1], r[2, 2]])
             j = (i + 1) % 3
@@ -558,15 +649,21 @@ class Affine(Transformation):
 
 
     def __repr__(self):
-        msg = '{} (angles={}, interpolator={}, p={})'
+        msg = ('{} (angles={}, translation={}, scale={}, interpolator={},'
+               'image_background={}, mask_background={}, reference={}')
+
         return msg.format(self.__class__.__name__,
                           str(self.angles),
+                          str(self.translation),
+                          self.scale,
                           self.interpolator,
-                          self.p)
+                          self.image_background,
+                          self.mask_background,
+                          self.reference)
 
-
+        
 class RandomRotation3D(Transformation):
-    """ TODO: Update
+    """TODO: Update
     Rotate the given CT image by x, y, z angles.
 
     Args:
@@ -621,7 +718,8 @@ class RandomRotation3D(Transformation):
 
             image = sitk.Resample(image, image, composite, self.interpolator)
             if mask is not None:
-                mask = sitk.Resample(mask, mask, composite, self.interpolator)
+                mask = sitk.Resample(mask, mask, composite,
+                                     sitk.sitkNearestNeighbor)
         return image, mask
 
     def __repr__(self):
@@ -633,7 +731,7 @@ class RandomRotation3D(Transformation):
 
 
 class Flip(Transformation):
-    """ Flips an image and it's mask (if provided) across user specified axes.
+    """Flips an image and it's mask (if provided) across user specified axes.
 
     Args:
         axes (List): A list of boolean values for each dimension.
@@ -680,7 +778,7 @@ class Flip(Transformation):
 
 
 class RandomFlipX(Transformation):
-    """ Flips an image and it's mask (if provided) across x-axis (width).
+    """Flips an image and it's mask (if provided) across x-axis (width).
 
     Args:
         p (float): The transformation is applied with a probability of p.
@@ -996,6 +1094,9 @@ class RandomSegmentSafeCrop(Transformation):
 
     Regions of interest can be defined using a mask. Unlike many other
         transformation, this transformation requires a mask.
+        This transformation falls back to random crop when there region of
+        interest is empty. If crop size is less than segment size (in any
+        dimension), a random crop is made from the segment.
 
     Args:
         crop_size: Minimum size of the cropped region. Like all parameters in
@@ -1042,7 +1143,8 @@ class RandomSegmentSafeCrop(Transformation):
             mask_array[np.isin(mask_arr, self.include)] = 1
             binary_mask = sitk.GetImageFromArray(mask_array)
             binary_mask.CopyInformation(mask)
-            #
+            #If there is no segment, this transformation fall back to a
+            # random crop
             if mask_array.sum() == 0:
                 tsfm = RandomCrop(self.crop_size.tolist(), p=1.0)
                 return tsfm(image, mask=mask)
@@ -1082,7 +1184,7 @@ class RandomSegmentSafeCrop(Transformation):
 
 
 class SegmentCrop(Transformation):
-    """ Crop a region of interest from an image and its mask.
+    """Crop a region of interest from an image and its mask.
 
     Regions of interest is defined using a mask. Unlike many other
         transformation, this transformation requires a mask.
@@ -1167,9 +1269,9 @@ class Resize(Transformation):
         size: A tuple of int values representing image size. The order of
             dimensions should be (x, y, z), i.e. (width, height, and depth).
         interpolator: A SimpleITK interpolator function.
-            The default interpolator for image is ``sitk.sitkLinear``. Other
+            The default interpolator for image is ``sitk.sitkBSpline``. Other
             options for interpolations are:
-                * ``sitk.sitkBSpline``
+                * ``sitk.sitkLinear``
                 * ``sitk.sitkGaussian``
                 * ``sitk.sitkNearestNeighbor``
                 * ``sitk.sitkHammingWindowedSinc``
@@ -1188,7 +1290,7 @@ class Resize(Transformation):
             The default value is ``1.0``.
     """
     def __init__(self, size: Tuple[int, int, int],
-                 interpolator=sitk.sitkLinear,
+                 interpolator=sitk.sitkBSpline,
                  default_image_voxel_value=0,
                  default_mask_voxel_value=0,
                  p: float = 1.0):
@@ -1299,7 +1401,7 @@ class Expand(Transformation):
         self.p = p
         self.filter = sitk.ExpandImageFilter()
         self.filter.SetExpandFactors(self.expansion)
-        self.filter.SetInterpolator(self.interpolator)
+
 
     def __call__(self, image: sitk.Image, mask: sitk.Image = None):
         """Apply the transformation to an image and its mask (if provided).
@@ -1321,7 +1423,10 @@ class Expand(Transformation):
             if len(self.expansion) != image.GetDimension():
                 msg = 'Image dimension must equal the length of expansion.'
                 raise ValueError(msg)
-            image, mask = apply_transform(self.filter, image, mask)
+            self.filter.SetInterpolator(self.interpolator)
+            image = self.filter.Execute(image)
+            self.filter.SetInterpolator(sitk.sitkNearestNeighbor)
+            mask = self.filter.Execute(mask)
         return image, mask
 
     def __repr__(self):
@@ -1574,7 +1679,7 @@ class AdditiveGaussianNoise(Transformation):
         self.filter.SetStandardDeviation(self.std)
 
     def __call__(self, image, mask=None, *args, **kwargs):
-        """ Apply the transformation to an image and its mask (if provided).
+        """Apply the transformation to an image and its mask (if provided).
 
         Args:
             image: A SimpleITK Image.
@@ -1590,7 +1695,7 @@ class AdditiveGaussianNoise(Transformation):
         """
         check_dimensions(image, mask)
         if random.random() <= self.p:
-            image, _ = apply_transform(self.filter, image, None, *args, **kwargs)
+            image, _ = apply_transform(self.filter, image, None)
         return image, mask
 
     def __repr__(self):
@@ -2214,7 +2319,7 @@ class MaskLabelRemap(Transformation):
 
 
 class Isotropic(Transformation):
-    """ Make an image isotropic, i.e. equally spaced in all directions.
+    """Make an image isotropic, i.e. equally spaced in all directions.
 
     Args:
         interpolator= The interpolator used for resampling. The default is
@@ -2276,7 +2381,7 @@ class Isotropic(Transformation):
         self.filter = self.resampler.filter
 
     def __call__(self, image, mask=None):
-        """ Apply the transformation to an image and its mask (if provided).
+        """Apply the transformation to an image and its mask (if provided).
 
         Args:
             image: A SimpleITK Image.
@@ -2300,7 +2405,7 @@ class Isotropic(Transformation):
 
 
 class Resample(Transformation):
-    """ Make an image isotropic, i.e. equally spaced in all directions.
+    """Make an image isotropic, i.e. equally spaced in all directions.
 
     Args:
         interpolator= The interpolator used for resampling. The default is
@@ -2363,7 +2468,7 @@ class Resample(Transformation):
 
 
     def __call__(self, image, mask=None):
-        """ Apply the transformation to an image and its mask (if provided).
+        """Apply the transformation to an image and its mask (if provided).
 
         Args:
             image: A SimpleITK Image.
@@ -2390,7 +2495,7 @@ class Resample(Transformation):
 
     def __resample(self, image, interpolator, default_voxel_value,
                    output_voxel_type):
-        """ A helper function for resampling one image.
+        """A helper function for resampling one image.
         Args:
             interpolator: The interpolator used for resampling. The default is
                 ``sitk.sitkLinear``. Other options for interpolations are:
@@ -2437,23 +2542,27 @@ class Resample(Transformation):
             self.filter.SetOutputOrigin(self.output_origin)
         # Set default voxel value
         self.filter.SetDefaultPixelValue(default_voxel_value)
+        if output_voxel_type is None:
+            output_voxel_type = image.GetPixelIDValue()
         self.filter.SetOutputPixelType(output_voxel_type)
         self.filter.SetInterpolator(interpolator)
         return self.filter.Execute(image)
 
     def __repr__(self):
         msg = ('{} (interpolator={}, output_spacing={}, '
-               'default_voxel_value={}, output_voxel_type={}, '
-               'output_direction={}, output_voxel_Type={}, '
-               'output_direction={}, use_nearest_neighbor_extrapolator={}')
+               'default_image_voxel_value={}, default_mask_voxel_value={}, '
+               'output_image_voxel_type={}, output_mask_voxel_type={}, '
+               'output_direction={}, output_origin={}'
+               'use_nearest_neighbor_extrapolator={}')
         return msg.format(self.__class__.__name__,
                           self.interpolator,
                           self.output_spacing,
-                          self.default_voxel_value,
-                          self.output_voxel_type,
+                          self.default_image_voxel_value,
+                          self.default_mask_voxel_value,
+                          self.output_image_voxel_type,
+                          self.output_mask_voxel_type,
                           self.output_direction,
-                          self.output_voxel_Type,
-                          self.output_direction,
+                          self.output_origin,
                           self.nne)
 
 
@@ -2523,8 +2632,7 @@ class Reader(Transformation):
 
 
 class Writer(Transformation):
-    """ Wrtie image and its corresponding mask (if provided) from their
-        addresses.
+    """Wrtie image and its corresponding mask (if provided) to file.
 
     Each address should be a file address. The supported IO file formats
         include:
@@ -2544,14 +2652,140 @@ class Writer(Transformation):
 
     """
 
+    def __init__(self):
+        pass
+
+    def __call__(self, image: sitk.Image = None, mask: sitk.Image = None,
+                 image_path: str = None, mask_path: str = None, image_type=None,
+                 mask_type=None, compressor='', use_compression=False,
+                 compression_level=-1):
+        """Write image and mask (if provided) to files.
+
+        Args:
+            image: A SimpleITK Image.
+            mask: A SimpleITK Image representing the contours for the image.
+                The default value is None. If mask is not None, its size should
+                be equal to the size of the image.
+            image_path: The path in which ``image`` is saved. The file name
+                should be at the end of the path and the extension should be the
+                extension for a valid file type.
+            mask_path: The path in which ``mask`` is saved.  The file name
+                should be at the end of the path and the extension should be the
+                extension for a valid file type.
+            image_type: The image type used for casting the image. The
+                default is None, meaning that no casting is applied by default.
+            mask_type: The mask type used for casting the image. The
+                default is None, meaning that no casting is applied by default.
+                If applied, for most cases this shuld be sitk.sitkUInt8. In case
+                the labels used in the mask are larger than 255,
+                ``sitk.sitkUInt16``, ``sitk.sitkUInt32``, or ``sitk.sitkUInt64``
+                should be used. If negative values are included in the labels
+                of the mask, use sitk.sitkInt8, sitk.sitkInt16, or
+                sitk.sitkUInt32. Note that using larger data types lead to
+                increase in memory usage and larger files sizes.
+            use_compression: If True, it is a request for compressing the
+                image. Note that compression is not available for all file
+                types.
+            compressor: The compressor used for compression. The default is an
+                empty string, representing the default compression. Note that
+                not all file formats support compression.
+            compression_level: The compression level used for compression. The
+                default is -1, representing the default compression level.
+
+        """
+        check_dimensions(image, mask)
+        if image is not None:
+            if image_type is not None:
+                image = sitk.Cast(image, image_type)
+            sitk.WriteImage(image,
+                            fileName=image_path,
+                            useCompression=use_compression,
+                            compressionLevel=compression_level,
+                            compressor=compressor)
+        if mask is not None:
+            if mask_type is not None:
+                mask = sitk.Cast(mask, mask_type)
+            sitk.WriteImage(mask,
+                            fileName=mask_path,
+                            useCompression=use_compression,
+                            compressionLevel=compression_level,
+                            compressor=compressor)
+
+
+    def __repr__(self):
+        msg = '{} ()'
+        return msg.format(self.__class__.__name__)
+
+
+class SequentialWriter(Transformation):
+    """Wrtie image and its corresponding mask (if provided) to files.
+
+    Each address should be a file address. The supported IO file formats
+        include:
+        * BMPImageIO (*.bmp, *.BMP)
+        * BioRadImageIO (*.PIC, *.pic)
+        * GiplImageIO (*.gipl *.gipl.gz)
+        * JPEGImageIO (*.jpg, *.JPG, *.jpeg, *.JPEG)
+        * LSMImageIO (*.tif, *.TIF, *.tiff, *.TIFF, *.lsm, *.LSM)
+        * MINCImageIO (*.mnc, *.MNC)
+        * MRCImageIO (*.mrc, *.rec)
+        * MetaImageIO (*.mha, *.mhd)
+        * NiftiImageIO (*.nia, *.nii, *.nii.gz, *.hdr, *.img, *.img.gz)
+        * NrrdImageIO (*.nrrd, *.nhdr)
+        * PNGImageIO (*.png, *.PNG)
+        * TIFFImageIO (*.tif, *.TIF, *.tiff, *.TIFF)
+        * VTKImageIO (*.vtk)
+
+    Args:
+        dir_path: The default is '.', representing the
+        current directory.
+        image_prefix: A string used as the prefix for the saved image names.
+            THe defaut is 'image'.
+        image_postfix: A string used as the postfix for the saved image names.
+            THe defaut is empty string.
+        mask_prefix: A string used as the prefix for the saved mask names.
+            THe defaut is 'mask'.
+        mask_postfix=: A string used as the postfix for the saved image names.
+            THe defaut is empty string.
+        extension: The file extension used for saving files. This determines
+            the type of the saved file. The default is 'nrrd'.
+        image_type: The image type used for casting the image. The
+            default is None, meaning that no casting is applied by default.
+        mask_type: The mask type used for casting the image. The
+            default is None, meaning that no casting is applied by default.
+            If applied, for most cases this shuld be sitk.sitkUInt8. In case
+            the labels used in the mask are larger than 255, ``sitk.sitkUInt16``,
+            ``sitk.sitkUInt32``, or ``sitk.sitkUInt64`` should be used.
+            If negative values are included in the labels of the mask, use
+            sitk.sitkInt8, sitk.sitkInt16, or sitk.sitkUInt32. Note that
+            using larger data types lead to increase in memory usage and larger
+            files sizes.
+        compressor: The compressor used for compression. The default is an empty
+            string, representing the default compression. Note that not all
+            file formats support compression.
+        compression_level: The compression level used for compression. The
+            default is None, representing the default compression level.
+    """
+
     def __init__(self, dir_path='.', image_prefix='image', image_postfix='',
-                 mask_prefix='mask', mask_postfix='', extension='nrrd'):
+                 mask_prefix='mask', mask_postfix='', extension='nrrd',
+                 image_type=None, mask_type=None, compressor='',
+                 compression_level=None):
         self.image_prefix = image_prefix
         self.image_postfix = image_postfix
         self.mask_prefix = mask_prefix
         self.mask_postfix = mask_postfix
         self.extension = extension
+        self.image_type = image_type
+        self.mask_type = mask_type
+        self.compressor = compressor
+        self.compression_level = compression_level
         self.writer = sitk.ImageFileWriter()
+        if compressor is not None:
+            self.writer.UseCompressionOn()
+            self.writer.SetCompressor(self.compressor)
+            if self.compression_level is not None:
+                self.writer.SetCompressionLevel(self.compression_level)
         self.index = 0
         self.dir_path = dir_path
 
@@ -2566,7 +2800,7 @@ class Writer(Transformation):
                 os.path.join(self.dir_path, mask_path))
 
     def __call__(self, image: sitk.Image = None, mask: sitk.Image = None):
-        """ Write image and mask (if they are None) to files.
+        """Write image and mask (if they are None) to files.
 
         Args:
             image: A SimpleITK Image.
@@ -2579,6 +2813,10 @@ class Writer(Transformation):
             str: The wirtten mask file path.
         """
         check_dimensions(image, mask)
+        if self.image_type is not None:
+            image = sitk.Cast(image, self.image_type)
+        if self.mask_type is not None:
+            mask = sitk.Cast(mask, self.mask_type)
         image_path, mask_path = self.generate_path()
 
         if image is not None:
@@ -2810,7 +3048,7 @@ class Lambda(Transformation):
 
 
 class ToNumpy(Transformation):
-    """ Convert an image and its mask (if provided) to Numpy arrays.
+    """Convert an image and its mask (if provided) to Numpy arrays.
 
     Args:
         out_image_dtype: The numpy datatype used to as the type of the numpy
@@ -2831,7 +3069,7 @@ class ToNumpy(Transformation):
         if image is not None:
             img = sitk.GetArrayFromImage(image)
         if mask is not None:
-                msk = sitk.GetArrayFromImage(mask)
+            msk = sitk.GetArrayFromImage(mask)
         # Change image and mask dtypes.
         if image is not None and self.out_image_dtype is not None:
             img = img.astype(self.out_image_dtype)
@@ -2847,13 +3085,13 @@ class ToNumpy(Transformation):
 
 
 class FromNumpy(Transformation):
-    """ Convert arrays to objects of type SimpleITK.Image.
+    """Convert arrays to objects of type SimpleITK.Image.
 
     Args:
-        out_image_dtype: The SimpleITK data type used to as the type of the
+        out_image_dtype: The SimpleITK data type used as the type of the
             image. If `None`, the output data type is inferred from the image
             array.
-        out_mask_dtype: The SimpleITK data type used to as the type of the
+        out_mask_dtype: The SimpleITK data type used as the type of the
             mask. If `None`, the output data type is inferred from the mask
             array.
     """
@@ -2863,12 +3101,13 @@ class FromNumpy(Transformation):
 
     def __call__(self, image, mask=None):
         # Convert image and mask arrays to objects of type SimpleITK.Image.
-        assert isinstance(image, np.ndarray)
         img, msk = None, None
         if image is not None:
+            assert isinstance(image, np.ndarray)
             img = sitk.GetImageFromArray(image)
         if mask is not None:
-                msk = sitk.GetImageFromArray(mask)
+            assert isinstance(mask, np.ndarray)
+            msk = sitk.GetImageFromArray(mask)
         # Change image and mask dtypes.
         if image is not None and self.out_image_dtype is not None:
             img = sitk.Cast(img, self.out_image_dtype)
@@ -2884,19 +3123,19 @@ class FromNumpy(Transformation):
 
 
 class From2DTo3D(Transformation):
-    """ Convert a 2D SimpleITK image and mask to a 3D SimpleITK image and mask.
+    """Convert a 2D SimpleITK image and mask to a 3D SimpleITK image and mask.
 
     Convert 2D SimpleITK image (mask) to 3D SimpleITK image (mask) with user
         defined depth. The 2D image will be copied, as a single layer of a 3D
         image, to produce each layer of the 3D image.
 
     Args:
-        depth (int): Number of times to replicate the 2D image.
+        repeat (int): Number of times to replicate the 2D image.
             The default value is ``1``.
     """
-    def __init__(self, depth=1):
-        self.depth = depth
-        assert depth > 0, 'depth must be greater than to 0.'
+    def __init__(self, repeat=1):
+        self.repeat = repeat
+        assert repeat > 0, 'repeat must be greater than to 0.'
         self.filter = sitk.JoinSeriesImageFilter()
 
     def __call__(self, image, mask=None):
@@ -2905,23 +3144,70 @@ class From2DTo3D(Transformation):
         if image is not None and image.GetDimension() != 2 :
             raise ValueError(msg.format('image'))
         else:
-            slices = [image for _ in range(self.depth)]
+            slices = [image for _ in range(self.repeat)]
             img = self.filter.Execute(slices)
         if mask is not None and mask.GetDimension() != 2:
             raise ValueError(msg.format('mask'))
         else:
-            slices = [mask for _ in range(self.depth)]
+            slices = [mask for _ in range(self.repeat)]
             msk = self.filter.Execute(slices)
         return img, msk
 
     def __repr__(self):
-        msg = '{} (depth={})'
+        msg = '{} (repeat={})'
         return msg.format(self.__class__.__name__,
-                          self.depth)
+                          self.repeat)
+
+
+
+class From3DTo2D(Transformation):
+    """Convert a 3D thin image and its mask to a 2D image and mask.
+
+    A thin image is an image where the components across Z-axis represent only
+        one pixel. Common thin images are graysacale, with dimension 1 across
+        Z-axis, and RGB images, with dimension 3 across Z-axis.
+    """
+
+    def __init__(self, image_pixel_type=sitk.sitkVectorUInt8,
+                 mask_pixel_type=sitk.sitkUInt8):
+        self.image_pixel_type = image_pixel_type
+        self.mask_pixel_type = mask_pixel_type
+
+    @staticmethod
+    def make_2D_image(image3D, pixel_type):
+        img_array = sitk.GetArrayFromImage(image3D)
+        depth, _, _ = img_array.shape
+        if depth > 1:
+            img_array = img_array.transpose(1, 2, 0)
+            img = sitk.GetImageFromArray(img_array, isVector=True)
+        else:
+            img_array = np.squeeze(img_array, axis=0)
+            img = sitk.GetImageFromArray(img_array, isVector=False)
+        img.SetSpacing(image3D.GetSpacing()[:2])
+        img.SetOrigin(image3D.GetOrigin()[:2])
+        direc = np.array(image3D.GetDirection()).reshape(3, 3)[:2, :2].ravel()
+        img.SetDirection(direc.tolist())
+        return img
+
+    def __call__(self, image, mask=None):
+        check_dimensions(image, mask)
+        msg = 'The image should be  a 3D SimpleITK Image objects.'
+        img, msk = None, None
+        if image is not None and image.GetDimension() != 3 :
+            raise ValueError(msg)
+        else:
+            img = From3DTo2D.make_2D_image(image, self.image_pixel_type)
+        if mask is not None:
+            msk = From3DTo2D.make_2D_image(mask, self.mask_pixel_type)
+        return img, msk
+
+    def __repr__(self):
+        msg = '{} (pixel_type={})'
+        return msg.format(self.__class__.__name__, self.pixel_type)
 
 
 class Cast(Transformation):
-    """ Cast SimpleITK objects to new SimpleITK data types.
+    """Cast SimpleITK objects to new SimpleITK data types.
 
     Args:
         out_image_dtype: The SimpleITK data type used as the type of the
@@ -2953,3 +3239,5 @@ class Cast(Transformation):
         return msg.format(self.__class__.__name__,
                           self.out_image_dtype,
                           self.out_mask_dtype)
+
+
