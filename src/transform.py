@@ -522,53 +522,6 @@ class Affine(Transformation):
                     image_type=mask_type)
         return image, mask
 
-
-
-        # affine.Scale(self.angles)
-        # aug_transform = sitk.Similarity3DTransform()
-        # reference = image if self.reference is None else self.reference
-        # transform = sitk.AffineTransform(Affine.DIMENSION)
-        # transform.SetMatrix(image.GetDirection())
-        # transform.SetTranslation(np.array(image.GetOrigin()) -
-        #                          np.array(reference.GetOrigin()))
-        # # Modify the transformation to align the centers of the original and
-        # # reference image instead of their origins.
-        # centering = sitk.TranslationTransform(Affine.DIMENSION)
-        # center = np.array(image.GetSize()) / 2.0
-        # center = image.TransformContinuousIndexToPhysicalPoint(
-        #     center.tolist())
-        # ref_center = np.array(np.array(reference.GetSize()) / 2.0)
-        # ref_center = reference.TransformContinuousIndexToPhysicalPoint(
-        #     ref_center.tolist())
-        # centering.SetOffset(
-        #     (np.array(
-        #         transform.GetInverse().TransformPoint(center)) -
-        #         ref_center).tolist())
-        # centered_transform = sitk.CompositeTransform(transform)
-        # centered_transform.AddTransform(centering)
-        #
-        # # Set the augmenting transform's center so that
-        # #   the rotation is around the image center.
-        # aug_transform.SetCenter(ref_center)
-        # angles = [np.random.uniform(lb, ub) for (lb, ub) in self.angles]
-        # translation = [np.random.uniform(*pair) for pair in self.translation]
-        # parameters = Affine.__make_parameters(*angles, *translation, self.scale)
-        # aug_transform.SetParameters(parameters)
-        # # Since Augmentation is done in the reference image space,
-        # # so we first map the points from the reference image space
-        # # back onto itself T_aug (e.g. rotate the reference image)
-        # # and then we map to the original image space T0.
-        # composite = sitk.CompositeTransform([centered_transform,
-        #                                      aug_transform])
-        # aug_image = sitk.Resample(image, reference, composite,
-        #                           self.interpolator, self.image_background)
-        # aug_mask = None
-        # if mask is not None:
-        #     aug_mask = sitk.Resample(mask, reference, composite,
-        #                              sitk.sitkNearestNeighbor,
-        #                              self.mask_background)
-        # return aug_image, aug_mask
-
     @staticmethod
     def __make_parameters(theta_x, theta_y, theta_z, tx, ty, tz, scale):
         """Convert the Euler angle parametrization to quaternion.
@@ -3222,7 +3175,7 @@ class Cast(Transformation):
         self.out_mask_dtype = out_mask_dtype
 
     def __call__(self, image, mask=None):
-        # Change image and mask dtypes.
+        # Change image and mask data types.
         img, msk = image, mask
         if image is not None:
             assert isinstance(image, sitk.Image)
