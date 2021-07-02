@@ -7,13 +7,11 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Union, Iterable, Callable
 
 import numpy as np
-import scipy
 import SimpleITK as sitk
 
 from src.utils import get_stats
 from src.utils import read_image
 from src.utils import check_dimensions
-from scipy.spatial.transform import Rotation
 from src.utils import referenced_3D_resample
 from src.utils import refrence_free_3D_resample
 EPSILON = 1E-8
