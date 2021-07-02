@@ -374,13 +374,13 @@ class Rotate(Transformation):
     def __init__(self, angles: Tuple[int, int, int],
                  interpolator=sitk.sitkBSpline, image_background=0,
                  mask_background=0, reference=None):
-        self.angles = eangles
+        self.angles = angles
         self.interpolator = interpolator
         self.image_background = image_background
         self.mask_background = mask_background
         self.reference = reference
         self.rotation = Affine(self.angles, translation=(0, 0, 0),
-                               scale=[1] * DIMENSION,
+                               scales=[1] * DIMENSION,
                                interpolator=self.interpolator,
                                image_background=self.image_background,
                                mask_background=self.mask_background,
@@ -532,72 +532,6 @@ class Affine(Transformation):
                           self.image_background,
                           self.mask_background,
                           self.reference)
-
-        
-class RandomRotation3D(Transformation):
-    """Rotate a given image and its mask (if provided) in the 3D space.
-
-    Args:
-        angles (sequence): The rotation angles in degrees.
-            The rotation is over x, y, z in order. default is ``(10, 10, 10)``.
-        interpolator(sitk interpolator): interpolator to apply on
-            rotated ct images. The default is ``sitk.sitkBSpline``
-        p (float): The transformation is applied with a probability of p.
-            The default value is ``1.0``.
-    """
-    def __init__(self, angles=(10, 10, 10), interpolator=sitk.sitkBSpline,
-                 p: float = 1.0):
-        self.p = p
-        if angles == (0, 0, 0):
-            raise ValueError('There is no nonzero angle.')
-        if isinstance(angles, int):
-            angles = [0, 0, angles]
-        if isinstance(angles, (tuple, list)):
-            if len(angles) == 2 or len(angles) > 3:
-                raise ValueError(f'Expected one integer or a sequence of '
-                                 f'length 3 as a angle or each dimension. Got {len(angles)}.')
-        self.x_angle, self.y_angle, self.z_angle = angles
-        self.interpolator = interpolator
-
-    def define_transform(self, axes, angle, center):
-        trfm = sitk.VersorTransform(axes, np.deg2rad(angle))
-        trfm.SetCenter(center)
-        return trfm
-
-    def __call__(self, image, mask=None, *args, **kwargs):
-        check_dimensions(image, mask)
-        if random.random() <= self.p:
-            center = image.TransformContinuousIndexToPhysicalPoint(
-                                        np.array(image.GetSize())/2.0)
-            transformers_list = []
-            angle = random.randint(-self.z_angle, self.z_angle)
-            transformers_list.append(self.define_transform((0, 0, 1),
-                                                          angle,
-                                                          center))
-            angle = random.randint(-self.y_angle, self.y_angle)
-            transformers_list.append(self.define_transform((0, 1, 0),
-                                                           angle,
-                                                           center))
-            angle = random.randint(-self.x_angle, self.x_angle)
-            transformers_list.append(self.define_transform((1, 0, 0),
-                                                           angle,
-                                                           center))
-            composite = sitk.CompositeTransform(transformers_list[0])
-            for i in range(1, len(transformers_list)):
-                composite.AddTransform(transformers_list[i])
-
-            image = sitk.Resample(image, image, composite, self.interpolator)
-            if mask is not None:
-                mask = sitk.Resample(mask, mask, composite,
-                                     sitk.sitkNearestNeighbor)
-        return image, mask
-
-    def __repr__(self):
-        msg = '{} (angles={}, interpolator={}, p={})'
-        return msg.format(self.__class__.__name__,
-                          (self.x_angle, self.y_angle, self.z_angle),
-                          self.interpolator,
-                          self.p)
 
 
 class Flip(Transformation):
