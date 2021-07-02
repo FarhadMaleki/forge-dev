@@ -7,17 +7,18 @@ import SimpleITK as sitk
 def refrence_free_3D_resample(image, transformation, interpolator,
                               default_value, image_type=None, spacing=None,
                               direction=None):
-    """
+    """Do resampling without reference.
 
     Args:
-        image:
-        transformation:
-        interpolator:
-        default_value:
-        image_type:
-        size:
-        spacing:
-        direction:
+        image: A SimpleITK image.
+        transformation: A transformation to be applied to the image.
+        interpolator: he interpolator used for image interpolation after
+            applying transformation.
+        default_value: The default values used for voxel values.
+        image_type: The data type used for casting the resampled image.
+        size: The size of the image after resampling.
+        spacing: The spacing of the image after resampling.
+        direction: The direction of the image after resampling.
 
     Returns:
 
@@ -50,17 +51,20 @@ def refrence_free_3D_resample(image, transformation, interpolator,
 
 def referenced_3D_resample(image, transformation, interpolator, default_value,
                         image_type, reference=None):
-    """
+    """Do resampling using a given reference.
 
     Args:
-        image:
-        transformation:
-        interpolator:
-        default_value:
-        image_type:
-        reference:
+        image: A simpleITK image.
+        transformation: A transformation to be applied to the image.
+        interpolator: The interpolator used for image interpolation after
+            applying transformation.
+        default_value: The default values used for voxel values.
+        image_type: The data type used for casting the resampled image.
+        reference: The image used as the reference for resampling. If None,
+            the image itself is used as the reference.
 
     Returns:
+        sitk.Image: The resampled image.
 
     """
     if reference is None:
@@ -71,6 +75,22 @@ def referenced_3D_resample(image, transformation, interpolator, default_value,
 
 def image_equal(image1: sitk.Image, image2: sitk.Image, type_check=True,
                 tolerance=1e-6):
+    """Check if two images are equal.
+
+    Data type, size, and content are used for comparison. Two image with the
+    L2 distance less than a tolerance value are considered equal.
+
+    Args:
+        image1: A SimpleITK image.
+        image2: A SimpleITK image.
+        type_check: True is data type is used for comparison.
+        tolerance: The threshold used for the acceptable deviation between the
+            euclidean distance of voxel values between the two images.
+
+    Returns:
+        bool: True if two images are equal; otherwise, False.
+
+    """
     if type_check is True:
         # Check for equality of voxel types
         if image1.GetPixelIDValue() != image2.GetPixelIDValue():
@@ -149,7 +169,7 @@ def get_stats(image):
     return image_info
 
 def check_dimensions(image, mask):
-    """ Check if the size of the image and mask are equal.
+    """Check if the size of the image and mask are equal.
 
     Args:
         image: A sitk.Image.
@@ -169,7 +189,7 @@ def check_dimensions(image, mask):
 
 
 class Label(object):
-    """ Label a binary image.
+    """Label a binary image.
 
     Each distinct connected component (segment) is assigned a unique label. The
         segment labels start from 1 and are consecutive. The order of
