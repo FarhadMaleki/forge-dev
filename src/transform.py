@@ -545,7 +545,7 @@ class Affine(Transformation):
 
 
 class RandomAffine(Transformation):
-    """The affine transformation applied to an image and its mask (if provided).
+    """A random affine applied to an image and its mask (if provided).
 
     Args:
         angles: The interval for rotation angles in degrees. In a 3D context:
