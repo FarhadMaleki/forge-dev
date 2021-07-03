@@ -48,6 +48,7 @@ def expand_parameters(param, dimension, name, convert_fn=None):
 
     The boundary list must be a list of tuples of size 2. For example,
         in a 3D context this should be:
+        [(x_min, x_max), (y_min, y_max), (z_min, z_max)]
 
 
     Args:
@@ -408,8 +409,8 @@ class Affine(Transformation):
         angles: The rotation angles in degrees. This should be a tuple of 
             lengtyh 3.
         translation: The translation components. This should be a tuple of 
-            lengtyh 3.
-        scale: A scale factor.
+            lengtyh 3. The default is None, representing no translation.
+        scale: A scale factor. The default is None, representing no scaling.
         interpolator(sitk interpolator): The interpolator used by the 
             transformation. The defult is ``sitk.sitkBSpline``.
         image_background: The value used as the default for image voxels.
@@ -421,22 +422,29 @@ class Affine(Transformation):
     DIMENSION = 3
 
     def __init__(self, angles: Tuple[int, int, int],
-                 translation: tuple = (0, 0, 0), scales=1,
+                 translation: Tuple = None, scales=None,
                  interpolator=sitk.sitkBSpline, image_background=0,
                  mask_background=0, image_type=sitk.sitkInt16,
                  mask_type=sitk.sitkUInt8, reference=None,
                  spacing=None, direction=None, reshape=True):
-        if len(angles) != DIMENSION:
+        if angles is None:
+            angles = (0, ) * DIMENSION
+        if  len(angles) != DIMENSION:
             raise ValueError(f'angles must be of length {DIMENSION}')
-        if len(translation) != DIMENSION:
+        if translation is not None and len(translation) != DIMENSION:
             raise ValueError(f'translation must be of length {DIMENSION}')
         self.reference = reference
         self.angles = [-a for a in np.radians(angles)]
-        self.translation = [-t for t in translation]
+        if translation is not None:
+            self.translation = [-t for t in translation]
+        else:
+            self.translation = None
         self.image_type = image_type
         self.mask_type = mask_type
-
-        self.scale = [1./x for x in scales]
+        if scales is not None:
+            self.scale = [1./x for x in scales]
+        else:
+            self.scale = None
         self.interpolator = interpolator
         self.image_background = image_background
         self.mask_background = mask_background
@@ -467,8 +475,10 @@ class Affine(Transformation):
         affine.Rotate(Y, Z, angle=self.angles[X])
         affine.Rotate(X, Z, angle=self.angles[Y])
         affine.Rotate(X, Y, angle=self.angles[Z])
-        affine.Scale(self.scale)
-        affine.Translate(self.translation)
+        if self.scale is not None:
+            affine.Scale(self.scale)
+        if self.translation is not None:
+            affine.Translate(self.translation)
         # Set image_type
         if self.image_type is None:
             image_type = image.PixelIDValueType()
@@ -534,6 +544,125 @@ class Affine(Transformation):
                           self.reference)
 
 
+class RandomAffine(Transformation):
+    """The affine transformation applied to an image and its mask (if provided).
+
+    Args:
+        angles: The interval for rotation angles in degrees. In a 3D context:
+            * If angles is a scalar s, the boundary list will be
+                [(-|s|, |s|), (-|s|, |s|), (-|s|, |s|)], where |s| represents
+                the absolute value of s.
+            * If angles is a list of 3 scalars [a, b, c], the boundary list
+                will be
+                [(-|a|, |a|), (-|b|, |b|), (-|c|, |c|)], where |a| represents
+                the absolute value of a.
+            * angles can also have the following form:
+                [(x_min, x_max), (y_min, y_max), (z_min, z_max)]
+            The default value is None representing no rotation.
+        translation: The interval for translation components. Similar
+            format to that of angels are allowed. The default is None,
+            representing no translation.
+        scale: A scale factor. The default is None, representing no scaling. If
+            it is not None, it should have the following format:
+                [(x_min, x_max), (y_min, y_max), (z_min, z_max)]
+        interpolator(sitk interpolator): The interpolator used by the
+            transformation. The defult is ``sitk.sitkBSpline``.
+        image_background: The value used as the default for image voxels.
+        mask_background: The value used as the default for mask voxels.
+        reference: The refrence grid used for resampling during the
+            transformation. The default is None, meaning that the imge (mask)
+            itself is used for resampling.
+        p (float): The transformation is applied with a probability of p.
+            The default value is ``1.0``.
+    """
+    DIMENSION = 3
+
+    def __init__(self, angles,
+                 translation=None, scales=None,
+                 interpolator=sitk.sitkBSpline, image_background=0,
+                 mask_background=0, image_type=sitk.sitkInt16,
+                 mask_type=sitk.sitkUInt8, reference=None,
+                 spacing=None, direction=None, reshape=True, p: float = 1):
+        assert p > 0
+        self.angles = angles
+        self.translation = translation
+        self.scales = scales
+        self.interpolator = interpolator
+        self.image_background = image_background
+        self.mask_background = mask_background
+        self.image_type = image_type
+        self.mask_type = mask_type
+        self.reference = reference
+        self.spacing = spacing
+        self.direction = direction
+        self.reshape = reshape
+        self.p = p
+
+    def __call__(self, image, mask=None):
+        """Apply the transformation to an image and its mask (if provided).
+
+        Args:
+            image: A SimpleITK Image.
+            mask: A SimpleITK Image representing the contours for the image.
+                The default value is None. If mask is not None, its size should
+                be equal to the size of the image.
+
+        Returns:
+            sitk.Image: The transformed image.
+            sitk.Image: The mask for the transformed image. If the mask
+                parameter is None, this would also be None.
+        """
+        check_dimensions(image, mask)
+        if random.random() <= self.p:
+            angles = self.angles
+            if angles is not None:
+                angle_intervals = expand_parameters(angles, DIMENSION, 'angles',
+                                                    convert_fn=None)
+                angles = [np.random.randint(theta_min, high=theta_max + 1)
+                          for theta_min, theta_max in angle_intervals]
+            translation = self.translation
+            if translation is not None:
+                translation_intervals = expand_parameters(translation,
+                                                          DIMENSION,
+                                                          'translation',
+                                                          convert_fn=None)
+                translation = [np.random.uniform(low=t_min, high=t_max)
+                               for t_min, t_max in translation_intervals]
+            scales = self.scales
+            if scales is not None:
+                scales = [np.random.uniform(s_min, high=s_max)
+                          for s_min, s_max in scales]
+            self.tsfm = Affine(angles=angles, translation=translation,
+                               scales=scales, interpolator=self.interpolator,
+                               image_background=self.image_background,
+                               mask_background=self.mask_background,
+                               image_type=self.image_type,
+                               mask_type=self.mask_type,
+                               reference=self.reference, spacing=self.spacing,
+                               direction=self.direction, reshape=self.reshape)
+            image, mask = self.tsfm(image, mask)
+        return image, mask
+
+    def __repr__(self):
+        representation = str(self.tsfm)
+        msg = ('{} (angles={}, translation={}, scales={}, interpolator={}, '
+               'image_background={}, mask_background={}, image_type={},'
+               'mask_type={}, reference={}, spacing={}, direction={}, '
+               'reshape={}, p={}')
+        return '{} (angles={}, p={}'.format(self.__class__.__name__,
+                                   self.angles,
+                                   self.translation,
+                                   self.scales,
+                                   self.interpolator,
+                                   self.image_background,
+                                   self.mask_background,
+                                   self.image_type,
+                                   self.mask_type,
+                                   self.reference,
+                                   self.spacing,
+                                   self.direction,
+                                   self.reshape,
+                                   self.p)
 class Flip(Transformation):
     """Flips an image and it's mask (if provided) across user specified axes.
 

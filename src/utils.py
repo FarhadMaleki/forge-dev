@@ -115,11 +115,11 @@ def image_equal(image1: sitk.Image, image2: sitk.Image, type_check=True,
     return True
 
 
-def read_image(path: str):
+def read_image(image_path: str):
     """ Read an image.
 
     Args:
-        path: The path to the image file or the folder containing a DICOM image.
+        image_path: The path to the image file or the folder containing a DICOM image.
 
     Returns:
         sitk.Image: A SimpleITK Image.
@@ -129,22 +129,22 @@ def read_image(path: str):
             DICOM file in the provided ``path``.
 
     """
-    if os.path.isdir(path):
+    if os.path.isdir(image_path):
         reader = sitk.ImageSeriesReader()
-        series_IDs = reader.GetGDCMSeriesIDs(path)
+        series_IDs = reader.GetGDCMSeriesIDs(image_path)
         if len(series_IDs) > 1:
             msg = ('Only One image is allowed in a directory. There are '
-                   f'{len(series_IDs)} Series IDs (images) in {path}.')
+                   f'{len(series_IDs)} Series IDs (images) in {image_path}.')
             raise ValueError(msg)
         if len(series_IDs) == 0:
-            msg = f'There are not dicom files in {path}.'
+            msg = f'There are not dicom files in {image_path}.'
             raise ValueError(msg)
         series_id = series_IDs[0]
-        dicom_names = reader.GetGDCMSeriesFileNames(path, series_id)
+        dicom_names = reader.GetGDCMSeriesFileNames(image_path, series_id)
         reader.SetFileNames(dicom_names)
         image = reader.Execute()
-    elif os.path.isfile(path):
-        image = sitk.ReadImage(path)
+    elif os.path.isfile(image_path):
+        image = sitk.ReadImage(image_path)
     return image
 
 

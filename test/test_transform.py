@@ -712,6 +712,15 @@ class TestTransform(unittest.TestCase):
                             reference=None)
         img, msk = tsfm(image, mask)
 
+    def test_RandomAffine(self):
+        image, mask = TestTransform.load_cube('hole')
+        tsfm = forge.RandomAffine((0, 0, 45), translation=None,
+                                  scales=None,
+                                  interpolator=sitk.sitkBSpline,
+                                  image_background=-1024,
+                                  mask_background=0, reference=None)
+        img, msk = tsfm(image, mask)
+
     def test_Expand_raise_Error(self):
         image, mask = TestTransform.load_cube('small')
         image = sitk.Cast(image, sitk.sitkFloat32)
