@@ -705,11 +705,11 @@ class TestTransform(unittest.TestCase):
                             mask_background=0, reference=None)
         img, msk = tsfm(image, mask)
 
-    def test_Rotate(self):
+    def test_Rotation(self):
         image, mask = TestTransform.load_cube('hole')
-        tsfm = forge.Rotate((0, 0, 45), interpolator=sitk.sitkBSpline,
-                            image_background=-1024, mask_background=0,
-                            reference=None)
+        tsfm = forge.Rotation((0, 0, 45), interpolator=sitk.sitkBSpline,
+                              image_background=-1024, mask_background=0,
+                              reference=None)
         img, msk = tsfm(image, mask)
 
     def test_RandomAffine(self):

@@ -357,7 +357,7 @@ class ForegroundCrop(Transformation):
         return msg.format(self.__class__.__name__, self.background, self.bins)
 
 
-class Rotate(Transformation):
+class Rotation(Transformation):
     """Rotation transformation applied to an image and its mask (if provided).
 
     Args:
