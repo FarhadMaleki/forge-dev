@@ -2655,6 +2655,10 @@ class Reader(Transformation):
             sitk.Image: A mask. If the ``mask_path`` parameter is None,
                 this would also be ``None``.
         """
+        if (image_path is not None) and not os.path.exists(image_path):
+            raise ValueError(f'Invalid address: {image_path}')
+        if (mask_path is not None) and (not os.path.exists(mask_path)):
+            raise ValueError(f'Invalid address: {mask_path}')
         image, mask = None, None
         image = read_image(image_path)
         if mask_path is not None:
